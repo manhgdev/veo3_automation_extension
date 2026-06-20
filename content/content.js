@@ -4205,6 +4205,16 @@
           await p(5e3), S("⏳ Step 4: Locating tile IDs..."), r[3].status =
           "running";
           const o = await H(e, t, n);
+          if (o.fatal) {
+            const t = Z.find(t => t.id === e.groupId);
+            return t && veoAbortJobOnFatal(t, o.error, re), {
+              success: !1,
+              steps: r,
+              fatal: !0,
+              error: o.error,
+              cancelled: !0
+            }
+          }
           return o.success ? (r[3].status = "completed", {
             success: !0,
             steps: r,
@@ -4642,15 +4652,19 @@
             "❌ Not in Last Image To Image mode, skipping configuration..."),
           await w(n.downloadDoneButton, "Exit button"))
       }
-      return await p(2e3), await (async (e, t = 3e4, n = 200) => {
-        const r = Date.now();
-        for (; Date.now() - r < t;) {
+      return await p(2e3), await (async (e, t = 3e4, n = 200, r) => {
+        const o = Date.now();
+        for (; Date.now() - o < t;) {
+          if (r?.groupId) {
+            const e = Z.find(e => e.id === r.groupId);
+            if (e && veoAbortJobOnFatal(e, null, re)) return !1
+          }
           const t = i(e);
           if (!y(t)) return !0;
           await p(n)
         }
         return !1
-      })(n.stopButton, 9e5), !0
+      })(n.stopButton, 9e5, 200, e), !0
     } catch (n) {
       return D("Error in fillFlowPrompt:", n), !1
     }
@@ -4677,6 +4691,13 @@
         if (t && t()) return {
           success: !1,
           tileIds: []
+        };
+        const o = Z.find(t => t.id === e.groupId);
+        if (o && veoAbortJobOnFatal(o, null, re)) return {
+          success: !1,
+          tileIds: [],
+          fatal: !0,
+          error: o.fatalError
         };
         const e = [];
         i(r.outputItems).each((t, n) => {
@@ -4723,6 +4744,14 @@
           success: !1,
           resourceElements: [],
           tileIdsError: []
+        };
+        const jobGroup = Z.find(e => e.id === t.groupId);
+        if (jobGroup && veoAbortJobOnFatal(jobGroup, null, re)) return {
+          success: !1,
+          resourceElements: [],
+          tileIdsError: [],
+          fatal: !0,
+          error: jobGroup.fatalError
         };
         const c = e.map(e => i(o.tileByIdTemplate.replace("{tileId}", e))
           .first()).filter(e => e.length > 0);
@@ -4829,7 +4858,14 @@
       });
       const u = c.tileIdsError || [],
         l = e.filter(e => !u.includes(e)).slice(0, Math.max(1, Number(t.outputCount) || 1));
-      if (0 === l.length) return A(
+      if (0 === l.length) {
+        const e = Z.find(e => e.id === t.groupId);
+        if (e && veoAbortJobOnFatal(e, null, re)) return {
+          success: !1,
+          fatal: !0,
+          error: e.fatalError
+        };
+        return A(
         `⚠️ All tiles have warning for prompt ${t.promptIndex}, need retry`
         ), await chrome.runtime.sendMessage({
         type: "CS"
@@ -4838,7 +4874,8 @@
         "Exit button"), {
         success: !1,
         error: "Prompt generation failed"
-      };
+      }
+      }
       u.length > 0 && S(
         `⚠️ Filtered ${u.length} error tile(s) for prompt ${t.promptIndex}: [${u.join(", ")}]`
         );
@@ -5065,6 +5102,37 @@
           if (e.isCancelling) return !1
         } else a -= 1;
       return e.delayRemainingSeconds = 0, t(e), e.lastGenerationStartedAt = Date.now(), !0
+    },
+    veoDetectFlowFatalError = () => {
+      try {
+        let t = "";
+        document.querySelectorAll(
+          '[role="alert"], [role="status"], [data-sonner-toast], [data-radix-toast-viewport] *, [class*="toast" i], [class*="Toast"]'
+          ).forEach(e => {
+          t += " " + (e.textContent || "")
+        }), t.trim() || document.querySelectorAll("[data-tile-id]").forEach(e => {
+          t += " " + (e.textContent || "").slice(0, 400)
+        }), t = t.replace(/\s+/g, " ").trim();
+        if (!t) return null;
+        const n = [/hết hạn mức/i, /hạn mức.*(?:lượt|tạo)/i, /quota.*(?:exceeded|limit|reached)/i,
+          /Không thành công.{0,160}(?:mô hình khác|model khác|another model)/i,
+          /used up.*(?:quota|limit|generations)/i
+        ];
+        for (const e of n)
+          if (e.test(t)) {
+            const e = t.match(/Không thành công[^.!\n]{0,200}|hết hạn mức[^.!\n]{0,160}/i);
+            return (e?.[0] || "Flow: hết hạn mức model — đổi model hoặc chờ reset").trim()
+          }
+      } catch {}
+      return null
+    },
+    veoAbortJobOnFatal = (e, t, n) => {
+      if (!e || e.isCancelling) return t || null;
+      const r = t || veoDetectFlowFatalError();
+      return r ? (e.isCancelling = !0, e.fatalError = r, e.errorMessage = r, e.pendingIndexes = [], e
+        .status = "error", n?.(e), ee.forEach(t => {
+          t.id === e.id && (t.isCancelling = !0)
+        }), D(`🛑 Dừng job: ${r}`), S(`🛑 Dừng toàn bộ queue: ${r}`), r) : null
     };
   async function X(e, t, n, r) {
     Math.random().toString(36).slice(2, 6);
@@ -5096,7 +5164,9 @@
         const o = e.retryCountByIndex[i] || 0;
         e.currentPromptIndex = i, r(e);
         const u = await $(s, () => !!e.isCancelling, t);
-        if (e.currentPromptIndex = void 0, !u.success && !u.cancelled) {
+        if (e.currentPromptIndex = void 0, u.fatal || veoAbortJobOnFatal(e, u.error, r)) return;
+        if (!u.success && !u.cancelled) {
+          if (veoAbortJobOnFatal(e, null, r)) return;
           if (o < 2) {
             e.retryCountByIndex[i] = o + 1, e.pendingIndexes.includes(i) || e.pendingIndexes.unshift(i),
               r(e);
@@ -5243,11 +5313,12 @@
     }), te = null, void ne(1);
     for (;;) {
       if (e.isCancelling) {
-        e.status = "cancelled";
+        e.status = e.fatalError ? "error" : "cancelled";
         const t = e.results;
         return Z.shift(), re(e), e.sendResponse({
           success: !1,
-          cancelled: !0,
+          cancelled: !e.fatalError,
+          error: e.fatalError || void 0,
           results: t
         }), te = null, void ne(1)
       }
