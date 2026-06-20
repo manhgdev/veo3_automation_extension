@@ -4036,10 +4036,10 @@
         var n
       }, E = e => {
         if (!e) return "video";
-        let n = e.trim(),
+        let n = (e || "").trim().replace(/^\ufeff/, ""),
           r = "";
-        const o = n.match(/^\[(\d{1,2}:\d{2})\]\s*/);
-        o && (r = `[${o[1].replace(":", "-")}]`, n = n.slice(o[0].length));
+        const o = n.match(/^\[(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)\]\s*/);
+        o && (r = `[${o[1].replace(/:/g, "-")}]`, n = n.slice(o[0].length));
         let t = n.replace(/\s+/g, "-");
         return t = t.replace(/[^\p{L}\p{N}-]/gu, ""), t = t.replace(/-+/g, "-"), t = t
           .replace(/^-+|-+$/g, ""), t.length > 50 && (t = t.substring(0, 50)), t ||
@@ -4587,10 +4587,15 @@
     await h("@", "Digit2", 50), await p(300), await w(n.selectUploadCharacterType,
       "Click select upload character option"), await f(e), await p(1e3), await h(
       "Enter", "Enter", 13), await p(500)
+  }, veoTimelinePrefixRe = /^\[\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\]\s*/,
+  veoStripTimelinePrefix = e => {
+    const t = (e || "").trim().replace(/^\ufeff/, "").replace(veoTimelinePrefixRe, "").trim();
+    return t || (e || "").trim().replace(/^\ufeff/, "")
   }, F = async (e, t) => {
     try {
       const n = t.selectors,
-        u = !!(e.images && e.images.length > 0);
+        u = !!(e.images && e.images.length > 0),
+        promptText = veoStripTimelinePrefix(e.prompt);
       S("📝 Starting to fill prompt..."), await veoDismissFlowOverlays(n);
       const r = await v(n.promptTextarea, 1e4, 150);
       if (!r || 0 === r.length) return D(
@@ -4602,7 +4607,7 @@
       }
       await p(800, !0), await veoClearPromptEditor();
       if ("imageToVideo" === e.mode || e.outputPreviousPrompt?.extractedFrame)
-        await f(e.prompt);
+        await f(promptText);
       else {
         const n = ((e, t) => {
             const n = [];
@@ -4629,7 +4634,7 @@
             for (const i of n) i.index >= o && (r.push(i), o = i.index + i
               .length);
             return r
-          })(e.prompt, e.images),
+          })(promptText, e.images),
           r = ((e, t) => {
             const n = [];
             if (!t || 0 === t.length || !e) return n;
@@ -4652,7 +4657,7 @@
             for (const i of n) i.index >= o && (r.push(i), o = i.index + i
               .length);
             return r
-          })(e.prompt, e.characters),
+          })(promptText, e.characters),
           o = [...n.map(e => ({
             index: e.index,
             length: e.length,
@@ -4672,7 +4677,7 @@
           S(`💡 Found ${i.length} inline match(es) in prompt. Typing inline...`);
           let n = 0;
           for (const r of i) {
-            const o = e.prompt.substring(n, r.index + r.length);
+            const o = promptText.substring(n, r.index + r.length);
             if (o && (await f(o), await p(100)), await f(" "), await p(100),
               "image" === r.type) {
               if (!u) {
@@ -4685,8 +4690,8 @@
             }
             n = r.index + r.length
           }
-          if (n < e.prompt.length) {
-            const t = e.prompt.substring(n);
+          if (n < promptText.length) {
+            const t = promptText.substring(n);
             await f(t), await p(100)
           }
         } else u ? (S(`📝 ${e.images.length} image(s) attached — typing prompt only`), e
@@ -4694,7 +4699,7 @@
             S(
             `🎯 Mentioning all ${e.length} characters at start...`);
             for (const n of e) n && (await B(n, t), await f(" "), await p(200))
-          })(e.characters, t), await f(e.prompt)) : (e.images && e.images.length >
+          })(e.characters, t), await f(promptText)) : (e.images && e.images.length >
           0 && await (async (e, t) => {
             S(
             `🎯 Fallback: Mentioning all ${e.length} uploaded images at start...`);
@@ -4706,7 +4711,7 @@
             `🎯 Fallback: Mentioning all ${e.length} characters at start...`);
             for (const n of e) n && (await B(n, t), await f(" "), await p(
               200))
-          })(e.characters, t), await f(e.prompt))
+          })(e.characters, t), await f(promptText))
       }
       S(`✍️  Filled prompt: ${e.prompt.substring(0,50)}...`), await p(1200, !0);
       e.knownTileIdsBeforeSubmit = new Set(Ce(n)), S(
@@ -4858,7 +4863,8 @@
       resource: null,
       error: !1
     };
-    return /failed|error|lỗi|không thành công/i.test(e.text().toLowerCase()) ? {
+    return /failed|error|lỗi|không thành công|bất thường|unusual|hoạt động bất thường|could not|couldn't|unable to/i.test(e
+      .text().toLowerCase()) ? {
       ready: !1,
       pct: 0,
       resource: null,
@@ -4922,22 +4928,47 @@
         }
         const m = Math.round(f / u.length);
         veoStallCount = m === veoLastPct ? veoStallCount + 1 : 0, veoLastPct = m;
-        const y = (r ? l : d).slice(0, a),
-          x = y.length + h.length;
+        const y = (r ? l : d).slice(0, a);
         if (S(
-            `⏳ Generation: ${m}% — ${y.length}/${a} ready${h.length>0?`, ${h.length} tile(s) error`:""}`
-            ), g >= a || x >= a || m >= 99 && g > 0 || veoStallCount >= 15 && g > 0) {
+            `⏳ Generation: ${m}% — ${g}/${a} ready${h.length>0?`, ${h.length} tile(s) error`:""}`
+            ), h.length > 0 && 0 === g && (h.length >= a || h.length >= u.length && (m >= 70 ||
+            veoStallCount >= 3))) {
+          const n = i(o.tileByIdTemplate.replace("{tileId}", h[0])).first(),
+            s = veoExtractFlowFailMessage(n.text(), "Flow: tile generation failed");
+          return veoReportPromptProgress(t, m, "error"), {
+            success: !1,
+            resourceElements: [],
+            tileIdsError: h,
+            error: s
+          }
+        }
+        const flowPromptErr = veoDetectFlowPromptError();
+        if (flowPromptErr) {
+          const e = Z.find(e => e.id === t.groupId);
+          if (e && /bất thường|unusual\s+activit/i.test(flowPromptErr) && veoAbortJobOnFatal(e,
+              flowPromptErr, re)) return veoReportPromptProgress(t, m, "error"), {
+            success: !1,
+            resourceElements: [],
+            tileIdsError: h,
+            error: flowPromptErr,
+            fatal: !0
+          };
+          return veoReportPromptProgress(t, m, "error"), {
+            success: !1,
+            resourceElements: [],
+            tileIdsError: h,
+            error: flowPromptErr
+          }
+        }
+        if (g >= a || m >= 99 && g >= a || veoStallCount >= 15 && g >= a) {
+          if (g < a) return veoReportPromptProgress(t, m, "error"), {
+            success: !1,
+            resourceElements: y,
+            tileIdsError: h,
+            error: `Only ${g}/${a} output(s) ready`
+          };
           try {
-            chrome.runtime.sendMessage({
-              type: "VIDEO_GENERATION_PROGRESS",
-              data: {
-                groupId: t.groupId,
-                promptIndex: t.promptIndex,
-                percentage: 100,
-                status: "completed",
-                prompt: t.prompt
-              }
-            }).catch(() => {})
+            veoReportPromptProgress(t, 100, "completed")
           } catch {}
           return {
             success: !0,
@@ -4946,20 +4977,11 @@
           }
         }
         try {
-          chrome.runtime.sendMessage({
-            type: "VIDEO_GENERATION_PROGRESS",
-            data: {
-              groupId: t.groupId,
-              promptIndex: t.promptIndex,
-              percentage: m,
-              status: "generating",
-              prompt: t.prompt
-            }
-          }).catch(() => {})
+          veoReportPromptProgress(t, m, "generating")
         } catch {}
         await p(2e3), s++
       }
-      return A("Generation did not complete within timeout"), {
+      return A("Generation did not complete within timeout"), veoReportPromptProgress(t, 0, "error"), {
         success: !1,
         resourceElements: [],
         tileIdsError: []
@@ -5056,6 +5078,7 @@
             e = o.quality1080Option
         }
         const r = t.maxRetries ?? 3;
+        let veoUiDlOk = 0;
         for (let i = 0; i < y.length; i++) {
           if (n && n()) return {
             success: !1,
@@ -5082,7 +5105,7 @@
                   `Tile ${i+1}: ${t.autoDownloadResourceQuality} option`),
                 S(
                   `✅ Tile ${i+1}: ${t.autoDownloadResourceQuality} download initiated`),
-                c = !0;
+                c = !0, veoUiDlOk++;
               break
             } catch (a) {
               A(`⚠️ Tile ${i+1} [${s}] attempt ${u}/${r} failed:`, a), u <
@@ -5091,10 +5114,13 @@
           }
           c || D(`❌ Tile ${i+1} [${s}]: all ${r} attempts failed, skipping`)
         }
-        return {
+        return veoUiDlOk >= y.length ? {
           success: !0,
           ...await d()
-        }
+        } : (A(`⚠️ Downloaded ${veoUiDlOk}/${y.length} tile(s) for prompt ${t.promptIndex}`), {
+          success: !1,
+          error: `Download failed (${veoUiDlOk}/${y.length})`
+        })
       }
       const x = c.resourceElements.slice(0, Math.max(1, Number(t.outputCount) || 1)),
         b = t.mode.includes("ToVideo");
@@ -5259,26 +5285,64 @@
         } else a -= 1;
       return e.delayRemainingSeconds = 0, t(e), e.lastGenerationStartedAt = Date.now(), !0
     },
-    veoDetectFlowFatalError = () => {
+    veoFlowFailPatterns = [/không thành công/i, /bất thường/i, /hoạt động bất thường/i,
+      /unusual\s+activit/i, /hết hạn mức/i, /hạn mức.*(?:lượt|tạo)/i, /quota.*(?:exceeded|limit|reached)/i,
+      /used up.*(?:quota|limit|generations)/i, /generation failed/i, /failed to generate/i,
+      /policy|vi phạm|violated/i, /something went wrong/i
+    ],
+    veoFlowLooksFailed = e => {
+      const t = (e || "").replace(/\s+/g, " ").trim();
+      return !!t && veoFlowFailPatterns.some(e => e.test(t))
+    },
+    veoExtractFlowFailMessage = (e, t) => {
+      const n = (e || "").replace(/\s+/g, " ").trim(),
+        r = n.match(
+          /không thành công[^.!\n]{0,200}|bất thường[^.!\n]{0,160}|unusual activit[^.!\n]{0,160}|hết hạn mức[^.!\n]{0,160}|generation failed[^.!\n]{0,120}/i
+          );
+      return (r?.[0] || t || "Flow: tạo không thành công").trim()
+    },
+    veoCollectFlowSurfaceText = () => {
+      let e = "";
       try {
-        let t = "";
         document.querySelectorAll(
             '[role="alert"], [data-sonner-toast], [data-state="open"][role="alertdialog"]'
-            ).forEach(e => {
-            t += " " + (e.textContent || "")
-          }), t = t.replace(/\s+/g, " ").trim();
-        if (!t) return null;
-        const n = [/hết hạn mức/i, /hạn mức.*(?:lượt|tạo)/i, /quota.*(?:exceeded|limit|reached)/i,
-          /Không thành công.{0,160}(?:mô hình khác|model khác|another model)/i,
-          /used up.*(?:quota|limit|generations)/i
-        ];
-        for (const e of n)
-          if (e.test(t)) {
-            const e = t.match(/Không thành công[^.!\n]{0,200}|hết hạn mức[^.!\n]{0,160}/i);
-            return (e?.[0] || "Flow: hết hạn mức model — đổi model hoặc chờ reset").trim()
-          }
+            ).forEach(t => {
+            e += " " + (t.textContent || "")
+          })
+      } catch {}
+      return e.replace(/\s+/g, " ").trim()
+    },
+    veoDetectFlowFatalError = () => {
+      try {
+        const t = veoCollectFlowSurfaceText();
+        if (!t || !veoFlowLooksFailed(t)) return null;
+        if (/bất thường|unusual\s+activit|hết hạn mức|quota.*(?:exceeded|limit|reached)|used up.*(?:quota|limit|generations)/i
+          .test(t)) return veoExtractFlowFailMessage(t,
+            "Flow: hoạt động bất thường — đổi profile hoặc thử lại sau");
+        return null
       } catch {}
       return null
+    },
+    veoDetectFlowPromptError = () => {
+      try {
+        const e = veoCollectFlowSurfaceText();
+        return e && veoFlowLooksFailed(e) ? veoExtractFlowFailMessage(e) : null
+      } catch {}
+      return null
+    },
+    veoReportPromptProgress = (e, t, n) => {
+      try {
+        chrome.runtime.sendMessage({
+          type: "VIDEO_GENERATION_PROGRESS",
+          data: {
+            groupId: e.groupId,
+            promptIndex: e.promptIndex,
+            percentage: t,
+            status: n,
+            prompt: e.prompt
+          }
+        }).catch(() => {})
+      } catch {}
     },
     veoAbortJobOnFatal = (e, t, n) => {
       if (!e || e.isCancelling) return null;

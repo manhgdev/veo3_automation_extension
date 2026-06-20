@@ -102707,6 +102707,52 @@ function Ru() {
   })
 }
 
+function veoNormalizePromptLine(t) {
+  return (t || "").trim().replace(/^\ufeff/, "")
+}
+
+function veoParsePrompts(t) {
+  if (!t) return [];
+  const e = veoNormalizePromptLine(t).split(/\n/).map(t => t.trim()).filter(t => t.length > 0),
+    n = /^\[\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\]\s*/,
+    o = e.filter(t => n.test(t));
+  if (o.length >= 2 && o.length >= .5 * e.length) {
+    const t = [];
+    for (const o of e) n.test(o) ? t.push(o.trim()) : t.length && (t[t.length - 1] +=
+      " " + o);
+    return t.filter(t => t.length > 0)
+  }
+  return t.split(/\n\s*\n/).map(t => t.trim()).filter(t => t.length > 0)
+}
+
+function veoSplitPromptTimeline(t) {
+  const e = veoNormalizePromptLine(t),
+    n = e.match(/^(\[\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\])\s*(.*)$/s);
+  return n ? {
+    time: n[1],
+    body: n[2].trim()
+  } : {
+    time: null,
+    body: e
+  }
+}
+
+function veoBuildDownloadFileName(t, e = 1, n = "mp4") {
+  if (!t) return `${String(e).padStart(3, "0")}_video.${n}`;
+  let o = veoNormalizePromptLine(t),
+    i = "";
+  const a = o.match(/^\[(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)\]\s*/);
+  a && (i = `[${a[1].replace(/:/g, "-")}]`, o = o.slice(a[0].length));
+  let r = o.replace(/\s+/g, "-");
+  return r = r.replace(/[^\p{L}\p{N}-]/gu, ""), r = r.replace(/-+/g, "-"), r = r.replace(/^-+|-+$/g, ""), r
+    .length > 50 && (r = r.substring(0, 50)), r || (r = "video"), `${String(e).padStart(3, "0")}_${i?`${i}_`:""}${r}.${n}`
+}
+
+function veoPromptPreviewBody(t, e = 42) {
+  const n = veoSplitPromptTimeline(t).body;
+  return n.length > e ? n.substring(0, e) + "..." : n
+}
+
 function Du(t) {
   const e = t.chainValue,
     n = t.getOptions;
@@ -102714,7 +102760,7 @@ function Du(t) {
   const o = Zo({});
   return {
     promptOptions: o,
-    parsePrompts: t => t ? t.split(/\n\s*\n/).map(t => t.trim()).filter(t => t.length > 0) : [],
+    parsePrompts: veoParsePrompts,
     getPromptOption: (t, e) => {
       if (o.value[t]) return o.value[t];
       const n = e.totalPrompts,
@@ -103661,6 +103707,9 @@ const wp = {
   qRowNum = {
     class: "veo-prompt-queue-num shrink-0 min-w-[1.75rem] text-center font-bold tabular-nums text-primary bg-primary/10 border border-primary/20 rounded px-1 py-0.5 leading-none"
   },
+  qTimeBadge = {
+    class: "veo-prompt-queue-num shrink-0 text-[10px] leading-none"
+  },
   eb = ca({
     __name: "PromptGroupQueue",
     props: {
@@ -103679,8 +103728,10 @@ const wp = {
         } = zc(),
         l = (t, e) => {
           const n = t.results?.find(t => (t.index ?? t.promptIndex - 1) === e);
-          if (n) return n.success ? n.downloadComplete || "completed" === t.status ? "completed" : "submitted" :
-            "error";
+          if (n) return !n.success || n.error ? "error" : n.downloadComplete || "completed" === t.status ?
+            "completed" : "submitted";
+          const r = i.value.find(n => n.groupId === t.id && n.promptIndex === e + 1);
+          if (r && "error" === r.status) return "error";
           const o = (t.downloadRetryCountByIndex?.[e] ?? 0) > 0;
           return "running" === t.status && t.currentPromptIndex === e ? o ? "retrying" : "running" : o ? "retrying" :
             "pending"
@@ -103831,7 +103882,10 @@ const wp = {
             const prog = veoGetProgress(row.groupId, row.promptIdx),
               st = row.st,
               grp = row.group,
-              pi = row.pi;
+              pi = row.pi,
+              previewRaw = grp.promptPreviews?.[pi] || `Prompt ${row.promptIdx}`,
+              tlParts = veoSplitPromptTimeline(previewRaw),
+              previewText = tlParts.time ? veoPromptPreviewBody(previewRaw, 50) : previewRaw;
             return ns(), rs("div", {
               key: row.key,
               class: xn(["flex flex-col rounded px-1.5 py-1 border text-xs", d[st] || d.pending])
@@ -103843,10 +103897,11 @@ const wp = {
                 "pi-check-circle": "completed" === st,
                 "pi-times-circle": "error" === st
               }])
-            }, null, 2), ps("span", {
+            }, null, 2), tlParts.time ? (ns(), rs("span", qTimeBadge, In(tlParts.time), 1)) : fs("", !
+              0), ps("span", {
               class: "flex-1 min-w-0 truncate",
-              title: grp.promptPreviews?.[pi]
-            }, In(grp.promptPreviews?.[pi] || `Prompt ${row.promptIdx}`), 9, Xp), ps(
+              title: previewRaw
+            }, In(previewText), 9, Xp), ps(
               "span", Jp, In(p(st, grp, pi)), 1), "error" === st ? (ns(), rs("span", {
               key: 0,
               class: "shrink-0 max-w-24 text-xs text-rose-600 dark:text-rose-200",
@@ -103996,13 +104051,16 @@ const hb = {
     class: "flex items-center gap-2"
   },
   xb = {
-    class: "flex-1 min-w-0"
+    class: "flex-1 min-w-0 flex items-start gap-1.5"
   },
   wb = {
-    class: "text-xs text-foreground truncate"
+    class: "text-xs text-foreground truncate flex-1 min-w-0"
   },
   Cb = {
     class: "text-xs text-muted-foreground"
+  },
+  modeFileName = {
+    class: "text-[10px] text-muted-foreground font-mono truncate leading-tight"
   },
   Sb = {
     key: 0,
@@ -104175,6 +104233,13 @@ const jb = ca({
       },
       getExtraRowBadges: {
         type: Function
+      },
+      autoChangeFileName: {
+        type: Boolean,
+        default: !1
+      },
+      fileExtension: {
+        default: "mp4"
       }
     },
     setup(t) {
@@ -104215,9 +104280,12 @@ const jb = ca({
               size: "small",
               "onUpdate:modelValue": e => t.setPromptOption(u, e)
             }, null, 8, ["model-value", "options", "onUpdate:modelValue"]), ps("div", xb, [
-              ps("p", wb, In(u + 1) + ". " + In(e.length > 30 ? e.substring(0, 30) +
-                "..." : e), 1), ps("p", Cb, In(i(u).includes(n()) ? t.concatLabel :
-                `${e.length} characters - ${i(u)}`), 1)
+              veoSplitPromptTimeline(e).time ? (ns(), rs("span", qTimeBadge, In(veoSplitPromptTimeline(e)
+                .time), 1)) : fs("", !0), ps("p", wb, In(veoSplitPromptTimeline(e).time ? veoPromptPreviewBody(
+                e, 42) : u + 1 + ". " + veoPromptPreviewBody(e, 42)), 1), ps("p", Cb, In(i(u).includes(n()) ? t
+                .concatLabel : `${e.length} characters - ${i(u)}`), 1), t.autoChangeFileName ? (ns(), rs(
+                "p", modeFileName, In(veoBuildDownloadFileName(e, u + 1, t.fileExtension)), 9)) : fs("", !
+                0)
             ])]), void 0 !== t.imagesPerPrompt ? (ns(), rs(Xr, {
               key: 0
             }, [r(u) ? (ns(), rs("div", Sb, [a(u) ? (ns(), rs("div", Tb, [ps("div", Ib, [c[
@@ -104268,7 +104336,7 @@ const jb = ca({
             }, [ps("i", {
               class: xn(["pi flex-shrink-0", t.icon])
             }, null, 2), ps("span", null, In(t.text), 1)], 2))), 128)) : fs("", !0)
-          ]))), 128))]), ]), ps("p", Ub, In(t.tip), 1)])) : fs("", !0)
+          ])), 128)))] )] ), ps("p", Ub, In(t.tip), 1)])) : fs("", !0)
       }
     }
   });
@@ -123749,9 +123817,11 @@ const aC = {
           "set-prompt-option": ni(r),
           "get-options-for-prompt": ni(s),
           "get-row-badge": y,
-          "get-extra-row-badges": x
+          "get-extra-row-badges": x,
+          "auto-change-file-name": t.settings.autoChangeFileName,
+          "file-extension": "mp4"
         }, null, 8, ["prompts", "default-prompt-option", "label", "tip", "concat-label",
-          "get-prompt-option", "set-prompt-option", "get-options-for-prompt"
+          "get-prompt-option", "set-prompt-option", "get-options-for-prompt", "auto-change-file-name"
         ])])]), ps("div", _C, [bs(rb, {
           settings: t.settings,
           "has-concat": f.value,
@@ -124339,10 +124409,12 @@ const zC = {
           "set-prompt-option": ni(l),
           "get-options-for-prompt": ni(c),
           "images-per-prompt": ni(C),
-          "no-images-warning-text": e.$t("imageToVideoControl.validation.noImagesForPrompt")
+          "no-images-warning-text": e.$t("imageToVideoControl.validation.noImagesForPrompt"),
+          "auto-change-file-name": t.settings.autoChangeFileName,
+          "file-extension": "mp4"
         }, null, 8, ["prompts", "default-prompt-option", "label", "tip", "concat-label",
           "get-prompt-option", "set-prompt-option", "get-options-for-prompt",
-          "images-per-prompt", "no-images-warning-text"
+          "images-per-prompt", "no-images-warning-text", "auto-change-file-name"
         ])])]), ps("div", uS, [bs(rb, {
           settings: t.settings,
           "has-concat": x.value,
@@ -124645,10 +124717,12 @@ const zC = {
               e)),
             "row-warning-text": e.$t("componentsToVideoControl.autoAddCharacterImages.noMatch"),
             "get-row-badge": E,
-            "get-extra-row-badges": O
+            "get-extra-row-badges": O,
+            "auto-change-file-name": t.settings.autoChangeFileName,
+            "file-extension": "mp4"
           }, null, 8, ["prompts", "default-prompt-option", "label", "tip", "concat-label",
             "get-prompt-option", "set-prompt-option", "get-options-for-prompt",
-            "images-per-prompt", "show-row-warning", "row-warning-text"
+            "images-per-prompt", "show-row-warning", "row-warning-text", "auto-change-file-name"
           ])])]), ps("div", ES, [bs(rb, {
             settings: t.settings,
             "has-concat": x.value,
@@ -124868,10 +124942,12 @@ const zC = {
           "set-prompt-option": ni(r),
           "get-options-for-prompt": ni(s),
           "chain-indicator-text": e.$t("common.imageModeOptions.concat"),
-          "get-extra-row-badges": w
+          "get-extra-row-badges": w,
+          "auto-change-file-name": t.settings.autoChangeFileName,
+          "file-extension": "png"
         }, null, 8, ["prompts", "default-prompt-option", "label", "tip", "concat-label",
           "get-prompt-option", "set-prompt-option", "get-options-for-prompt",
-          "chain-indicator-text"
+          "chain-indicator-text", "auto-change-file-name"
         ])])]), ps("div", US, [bs(rb, {
           settings: t.settings,
           "has-concat": f.value,
@@ -125146,11 +125222,13 @@ const zC = {
           "show-row-warning": e => !(!t.settings.autoAddCharacterImages || ni(w)(e)),
           "row-warning-text": e.$t("imageToImageControl.autoAddCharacterImages.noMatch"),
           "no-images-warning-text": e.$t("imageToImageControl.validation.noImagesForPrompt"),
-          "get-extra-row-badges": P
+          "get-extra-row-badges": P,
+          "auto-change-file-name": t.settings.autoChangeFileName,
+          "file-extension": "png"
         }, null, 8, ["prompts", "default-prompt-option", "label", "tip", "concat-label",
           "get-prompt-option", "set-prompt-option", "get-options-for-prompt",
           "images-per-prompt", "chain-indicator-text", "show-row-warning", "row-warning-text",
-          "no-images-warning-text"
+          "no-images-warning-text", "auto-change-file-name"
         ])])]), ps("div", oT, [bs(rb, {
           settings: t.settings,
           "has-concat": k.value,
@@ -125456,10 +125534,12 @@ const zC = {
               e)),
             "row-warning-text": e.$t("agentAutomationControl.autoAddCharacterImages.noMatch"),
             "get-row-badge": E,
-            "get-extra-row-badges": O
+            "get-extra-row-badges": O,
+            "auto-change-file-name": t.settings.autoChangeFileName,
+            "file-extension": "mp4"
           }, null, 8, ["prompts", "default-prompt-option", "label", "tip", "concat-label",
             "get-prompt-option", "set-prompt-option", "get-options-for-prompt",
-            "images-per-prompt", "show-row-warning", "row-warning-text"
+            "images-per-prompt", "show-row-warning", "row-warning-text", "auto-change-file-name"
           ])])]), ps("div", wT, [bs(rb, {
             settings: t.settings,
             "has-concat": x.value,
