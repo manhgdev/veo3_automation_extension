@@ -24,18 +24,18 @@
 
       .veo-prompt-queue-list {
         min-height: 6rem;
-        height: 9rem;
+        height: 10rem;
         overflow: auto;
         resize: vertical;
         overscroll-behavior: contain;
         padding-right: 0.25rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
       }
 
-      .veo-prompt-queue-prompts {
-        max-height: 12rem;
-        overflow: auto;
-        overscroll-behavior: contain;
-        padding-right: 0.25rem;
+      .veo-prompt-queue-num {
+        font-size: 0.65rem;
       }
     </style>
     <script type="module" src="app.js"></script>

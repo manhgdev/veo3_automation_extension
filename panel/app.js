@@ -103566,19 +103566,31 @@ const wp = {
     }
   }),
   Rp = {
-    class: "rounded-xl border border-border/60 bg-background/70 backdrop-blur-md shadow-sm p-3 space-y-3 text-foreground"
+    class: "rounded-xl border border-border/60 bg-background/70 backdrop-blur-md shadow-sm p-2 space-y-1.5 text-foreground"
   },
-  Dp = {
-    class: "flex items-center justify-between gap-2"
+  qToolbar = {
+    class: "flex items-center gap-2 min-w-0"
   },
   Vp = {
-    class: "flex items-center gap-2 text-foreground"
+    class: "flex items-center gap-1.5 min-w-0 flex-1"
   },
   Np = {
-    class: "text-sm font-semibold tracking-wide uppercase text-foreground"
+    class: "text-xs font-semibold tracking-wide uppercase text-foreground shrink-0"
   },
-  $p = {
-    class: "text-xs text-muted-foreground dark:text-slate-300"
+  qCount = {
+    class: "text-[10px] text-muted-foreground dark:text-slate-300 tabular-nums shrink-0"
+  },
+  qMeta = {
+    class: "flex items-center gap-1 shrink-0 flex-wrap justify-end"
+  },
+  qDelayChip = {
+    class: "flex items-center gap-0.5 text-[10px] text-amber-600 dark:text-amber-200 font-medium whitespace-nowrap px-1.5 py-0.5 rounded bg-amber-500/10"
+  },
+  qBtnRow = {
+    class: "flex items-center gap-0.5"
+  },
+  qProgRow = {
+    class: "flex items-center gap-1.5"
   },
   zp = ["onClick"],
   Up = {
@@ -103614,31 +103626,40 @@ const wp = {
   Zp = ["title"],
   Qp = {
     key: 0,
-    class: "mt-1.5 flex items-center gap-2"
+    class: "mt-1 flex items-center gap-1.5"
   },
   tb = {
-    class: "flex-1 bg-muted rounded-full h-1.5"
-  },
-  qOpWrap = {
-    class: "space-y-1.5"
-  },
-  qOpHead = {
-    class: "flex items-center justify-between gap-2 text-xs"
+    class: "flex-1 bg-muted rounded-full h-1"
   },
   qOpLabel = {
-    class: "text-muted-foreground dark:text-slate-300"
+    class: "text-[10px] text-muted-foreground dark:text-slate-300 shrink-0 whitespace-nowrap leading-none"
   },
   qOpVal = {
-    class: "font-semibold tabular-nums text-primary"
+    class: "text-[10px] font-semibold tabular-nums text-primary shrink-0 w-7 text-right leading-none"
   },
   qOpTrack = {
-    class: "h-2 bg-muted rounded-full overflow-hidden"
+    class: "h-1.5 flex-1 bg-muted rounded-full overflow-hidden min-w-[3rem]"
   },
   qOpFill = {
     class: "h-full bg-primary transition-all duration-300 rounded-full"
   },
   qRecovBanner = {
-    class: "flex items-center gap-2 rounded-lg border border-orange-300/60 bg-orange-50 dark:bg-orange-950/40 px-3 py-2 text-xs text-orange-800 dark:text-orange-200"
+    class: "flex items-center gap-1 rounded border border-orange-300/40 bg-orange-50/80 dark:bg-orange-950/30 px-1.5 py-0.5 text-[10px] text-orange-800 dark:text-orange-200 leading-tight"
+  },
+  qActions = {
+    class: "hidden"
+  },
+  qDelayBanner = {
+    class: "hidden"
+  },
+  qErrBanner = {
+    class: "rounded border border-rose-200/80 dark:border-rose-800/80 bg-rose-50/80 dark:bg-rose-950/30 px-1.5 py-0.5 text-[10px] text-rose-700 dark:text-rose-200 leading-tight"
+  },
+  qEmpty = {
+    class: "px-2 py-3 text-xs text-muted-foreground text-center"
+  },
+  qRowNum = {
+    class: "veo-prompt-queue-num shrink-0 min-w-[1.75rem] text-center font-bold tabular-nums text-primary bg-primary/10 border border-primary/20 rounded px-1 py-0.5 leading-none"
   },
   eb = ca({
     __name: "PromptGroupQueue",
@@ -103653,19 +103674,50 @@ const wp = {
         {
           t: n
         } = Tc(),
-        o = Zo(null),
         {
           generationProgress: i
         } = zc(),
-        a = Ds(() => n("controlTab.promptGroups.countLabel", {
-          count: e.promptGroups.length
-        }));
-      Rr(() => e.promptGroups.length, (t, n) => {
-        if (t > (n ?? 0)) {
-          const t = e.promptGroups[e.promptGroups.length - 1];
-          t && (o.value = t.id)
-        }
-      });
+        l = (t, e) => {
+          const n = t.results?.find(t => (t.index ?? t.promptIndex - 1) === e);
+          if (n) return n.success ? n.downloadComplete || "completed" === t.status ? "completed" : "submitted" :
+            "error";
+          const o = (t.downloadRetryCountByIndex?.[e] ?? 0) > 0;
+          return "running" === t.status && t.currentPromptIndex === e ? o ? "retrying" : "running" : o ? "retrying" :
+            "pending"
+        },
+        w = t => Math.max(0, Number(t.totalCount) || 0),
+        veoFlatQueue = Ds(() => {
+          const rows = [];
+          let globalIdx = 0;
+          for (const group of [...e.promptGroups].filter(t => "cancelled" !== t.status).sort((t, e) => (t
+              .createdAt ?? 0) - (e.createdAt ?? 0))) {
+            const count = w(group);
+            for (let idx = 1; idx <= count; idx++) {
+              globalIdx += 1;
+              const pi = idx - 1;
+              rows.push({
+                key: `${group.id}-${pi}`,
+                group,
+                groupId: group.id,
+                promptIdx: idx,
+                globalIdx,
+                pi,
+                st: l(group, pi) || "pending"
+              })
+            }
+          }
+          return rows
+        }),
+        veoActiveGroup = Ds(() => e.promptGroups.find(t => t.isActive || ["running", "paused", "queued"].includes(t
+          .status)) ?? null),
+        a = Ds(() => {
+          const t = veoFlatQueue.value,
+            o = t.filter(t => ["completed", "error"].includes(t.st)).length;
+          return n("controlTab.promptGroups.itemsLabel", {
+            processed: o,
+            total: t.length
+          })
+        });
       const {
         cancelJobGroup: veoCancelGroupFn,
         pauseJobGroup: veoPauseGroupFn,
@@ -103687,20 +103739,6 @@ const wp = {
         veoQueueGroupAction(veoPauseGroupFn, t)
       }, veoResumeGroup = t => {
         veoQueueGroupAction(veoResumeGroupFn, t)
-      }, l = (t, e) => {
-        const n = t.results?.find(t => (t.index ?? t.promptIndex - 1) === e);
-        if (n) return n.success ? n.downloadComplete || "completed" === t.status ? "completed" : "submitted" :
-          "error";
-        const o = (t.downloadRetryCountByIndex?.[e] ?? 0) > 0;
-        return "running" === t.status && t.currentPromptIndex === e ? o ? "retrying" : "running" : o ? "retrying" :
-          "pending"
-      }, c = {
-        queued: "bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600",
-        running: "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-700",
-        paused: "bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-200 border border-orange-200 dark:border-orange-700",
-        completed: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-700",
-        cancelled: "bg-slate-200 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-600",
-        error: "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-700"
       }, d = {
         pending: "bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-200 border-slate-200 dark:border-slate-600",
         running: "bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-200 border-amber-200 dark:border-amber-700",
@@ -103717,192 +103755,116 @@ const wp = {
         }
         return n(`controlTab.promptGroups.promptStatus.${t}`)
       }, b = (t, e) => i.value.find(n => n.groupId === t && n.promptIndex === e) ?? null,
-        _ = (t, e) => {
+        veoGetProgress = (t, e) => {
           const n = b(t, e);
           return n && "number" == typeof n.percentage ? n : null
         },
-        w = t => Math.max(0, Number(t.totalCount) || 0),
         m = veoPersistResize("veo-ui-queue-height"),
         g = Ds(() => {
-          const t = e.promptGroups.find(t => t.isActive || "running" === t.status || "paused" === t
-            .status);
+          const t = veoActiveGroup.value;
           return t ? veoGroupOverallProgress(t, l, i.value) : null
         }),
         v = Ds(() => null != g.value),
         y = Ds(() => e.promptGroups.some(t => t.recoveryPassActive));
-      const veoScrollActiveQueue = () => {
-        const t = e.promptGroups.find(t => t.isActive || "running" === t.status || "paused" === t
-          .status);
-        t && (o.value = t.id), veoScrollQueueToActive(m, e.promptGroups, l)
-      };
-      Rr(() => e.promptGroups.map(t => ({
-        id: t.id,
-        status: t.status,
-        isActive: t.isActive,
-        currentPromptIndex: t.currentPromptIndex,
-        processedCount: t.processedCount
-      })), veoScrollActiveQueue, {
-        deep: !0,
-        flush: "post"
-      }), Rr(i, veoScrollActiveQueue, {
-        deep: !0,
-        flush: "post"
-      });
-      return (e, i) => {
-        const r = _a("PButton");
-        return ns(), rs("div", Rp, [ps("div", Dp, [ps("div", Vp, [i[1] || (i[1] = ps("i", {
-          class: "pi pi-list-check text-sm text-primary"
-        }, null, -1)), ps("span", Np, In(ni(n)("controlTab.promptGroups.title")), 1)]), ps("span", $p, In(
-          a.value), 1)]), v.value ? (ns(), rs("div", qOpWrap, [ps("div", qOpHead, [ps("span", qOpLabel, In(ni(n)(
-          "controlTab.promptGroups.overallProgress")), 1), ps("span", qOpVal, In(g.value) + "%", 1)]), ps(
-          "div", qOpTrack, [ps("div", {
+      return (renderCtx, slot) => {
+        const r = _a("PButton"),
+          ag = veoActiveGroup.value,
+          rows = veoFlatQueue.value;
+        return ns(), rs("div", Rp, [ps("div", qToolbar, [ps("div", Vp, [slot[1] || (slot[1] = ps("i", {
+          class: "pi pi-list-check text-xs text-primary shrink-0"
+        }, null, -1)), ps("span", Np, In(ni(n)("controlTab.promptGroups.title")), 1), ps("span", qCount, In(
+          a.value), 1)]), ps("div", qMeta, [ag && void 0 !== ag.delayRemainingSeconds && ag
+          .delayRemainingSeconds > 0 ? (ns(), rs("span", qDelayChip, [slot[2] || (slot[2] = ps("i", {
+          class: "pi pi-clock text-[9px]"
+        }, null, -1)), ps("span", null, In(ni(n)("controlTab.promptGroups.delayCountdown", {
+          seconds: ag.delayRemainingSeconds
+        })), 1)])) : fs("", !0), ag && ["running", "paused", "queued"].includes(ag.status) ? (ns(), rs(
+          "div", qBtnRow, ["paused" === ag.status ? (ns(), ss(r, {
+          key: "resume",
+          size: "small",
+          severity: "success",
+          icon: "pi pi-play",
+          text: "",
+          title: ni(n)("common.resume"),
+          onClick: t => veoResumeGroup(ag.id)
+        }, null, 8, ["title", "onClick"])) : fs("", !0), "running" === ag.status ? (ns(), ss(r, {
+          key: "pause",
+          size: "small",
+          severity: "warning",
+          icon: "pi pi-pause",
+          text: "",
+          title: ni(n)("common.pause"),
+          onClick: t => veoPauseGroup(ag.id)
+        }, null, 8, ["title", "onClick"])) : fs("", !0), "queued" === ag.status ? (ns(), ss(r, {
+          key: "remove",
+          size: "small",
+          severity: "secondary",
+          icon: "pi pi-times",
+          text: "",
+          title: ni(n)("controlTab.promptGroups.actions.remove"),
+          onClick: t => veoCancelGroup(ag.id)
+        }, null, 8, ["title", "onClick"])) : fs("", !0), "running" === ag.status || "paused" === ag
+          .status ? (ns(), ss(r, {
+          key: "stop",
+          size: "small",
+          severity: "danger",
+          icon: "pi pi-stop",
+          text: "",
+          title: ni(n)("controlTab.promptGroups.actions.stop"),
+          onClick: t => veoCancelGroup(ag.id)
+        }, null, 8, ["title", "onClick"])) : fs("", !0)])) : fs("", !0)])]), v.value ? (ns(), rs("div",
+          qProgRow, [ps("span", qOpLabel, In(ni(n)("controlTab.promptGroups.overallProgress")), 1), ps("div",
+          qOpTrack, [ps("div", {
             class: "h-full bg-primary transition-all duration-300 rounded-full",
             style: fn(`width: ${g.value}%`)
-          }, null, 4)])])) : fs("", !0), y.value ? (ns(), rs("div", qRecovBanner, [i[3] || (i[3] = ps(
-          "i", {
-            class: "pi pi-replay text-sm"
-          }, null, -1)), ps("span", null, In(ni(n)("controlTab.promptGroups.recoveryPass")), 1)])) :
-        fs("", !0), ps("div", {
+          }, null, 4)]), ps("span", qOpVal, In(g.value) + "%", 1)])) : fs("", !0), y.value ? (ns(), rs(
+          "div", qRecovBanner, [slot[3] || (slot[3] = ps("i", {
+            class: "pi pi-replay text-[9px] shrink-0"
+          }, null, -1)), ps("span", null, In(ni(n)("controlTab.promptGroups.recoveryPass")), 1)])) : fs("", !
+          0), ag && "error" === ag.status && ag.errorMessage ? (ns(), rs("div", qErrBanner, In(ag
+          .errorMessage), 1)) : fs("", !0), ps("div", {
           ref_key: "queueListRef",
           ref: m,
           class: "veo-prompt-queue-list text-muted-foreground dark:text-slate-300"
-        }, [ps("div", {
-          class: "space-y-2"
-        }, [(ns(!0), rs(Xr, null, Na(t.promptGroups, t => {
-          return ns(), rs("div", {
-            key: t.id,
-            "data-veo-queue-group-id": t.id,
-            class: xn([
-              "rounded-lg border border-border/50 bg-background/80 text-xs transition hover:border-primary/40 text-foreground overflow-hidden",
-              {
-                "border-primary/60 bg-primary/5 shadow-sm": t.isActive
-              }
-            ])
-          }, [ps("div", {
-            class: "flex items-start justify-between gap-3 px-3 py-2 cursor-pointer",
-            onClick: e => {
-              return n = t.id, void(o.value = o.value === n ? null : n);
-              var n
-            }
-          }, [ps("div", Up, [ps("div", jp, [ps("i", {
-            class: xn(["pi text-xs transition-transform", o.value === t.id ?
-              "pi-chevron-down" : "pi-chevron-right"
-            ])
-          }, null, 2), ps("span", Hp, In(t.id), 1), ps("span", {
-            class: xn([
-              "px-2 py-0.5 rounded-full text-xs font-semibold capitalize", (
-                e = t.status, c[e] || c.queued)
-            ])
-          }, In(u(t.status)), 3)]), ps("div", Gp, [ps("span", Kp, In(ni(n)(
-              "controlTab.promptGroups.itemsLabel", {
-                processed: t.processedCount,
-                total: t.totalCount
-              })), 1), void 0 !== t.delayRemainingSeconds && t
-            .delayRemainingSeconds > 0 ? (ns(), rs("div", Wp, [i[2] || (i[2] = ps(
-              "i", {
-                class: "pi pi-clock text-xs"
-              }, null, -1)), ps("span", null, In(ni(n)(
-              "controlTab.promptGroups.delayCountdown", {
-                seconds: t.delayRemainingSeconds
-              })), 1)])) : fs("", !0)
-          ])]), ps("div", {
-            class: "flex flex-row flex-wrap gap-1 justify-end",
-            onClick: i[0] || (i[0] = zl(() => {}, ["stop"]))
-          }, ["paused" === t.status ? (ns(), ss(r, {
-            key: "resume",
-            size: "small",
-            label: ni(n)("common.resume"),
-            severity: "warning",
-            icon: "pi pi-play",
-            text: "",
-            onClick: e => veoResumeGroup(t.id)
-          }, null, 8, ["label", "onClick"])) : fs("", !0), "running" === t.status ||
-          "queued" === t.status ? (ns(), ss(r, {
-            key: "pause",
-            size: "small",
-            label: ni(n)("common.pause"),
-            severity: "secondary",
-            icon: "pi pi-pause",
-            text: "",
-            onClick: e => veoPauseGroup(t.id)
-          }, null, 8, ["label", "onClick"])) : fs("", !0), "queued" === t.status ? (ns(), ss(r, {
-            key: "remove",
-            size: "small",
-            label: ni(n)("controlTab.promptGroups.actions.remove"),
-            severity: "secondary",
-            text: "",
-            onClick: e => veoCancelGroup(t.id)
-          }, null, 8, ["label", "onClick"])) : fs("", !0), "running" === t.status ||
-          "paused" === t.status ? (ns(), ss(r, {
-            key: "stop",
-            size: "small",
-            label: ni(n)("controlTab.promptGroups.actions.stop"),
-            severity: "danger",
-            text: "",
-            onClick: e => veoCancelGroup(t.id)
-          }, null, 8, ["label", "onClick"])) : fs("", !0)])], 8, zp), o.value === t.id ? (
-          ns(), rs("div", qp, ["error" === t.status && t.errorMessage ? (ns(), rs("div", {
-            key: "err",
-            class: "mx-2 mb-2 rounded border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-2 py-1.5 text-xs text-rose-700 dark:text-rose-200"
-          }, In(t.errorMessage), 1)) : fs("", !0), 0 === w(t) ? (ns(), rs("div", {
-            key: "empty",
-            class: "px-2 py-1.5 text-xs text-muted-foreground"
-          }, In("Không có prompt trong nhóm này."), 1)) : (ns(), rs("div", {
-            key: "list",
-            class: "veo-prompt-queue-prompts",
-            "data-veo-queue-prompts": t.id
-          }, [(ns(!0), rs(Xr, null, Na(w(t), e => {
-            const o = _(t.id, e),
-              a = e - 1,
-              s = l(t, a),
-              c = t.currentPromptIndex === a || ["running", "retrying", "submitted"].includes(s);
+        }, [0 === rows.length ? (ns(), rs("div", qEmpty, In("Chưa có prompt trong hàng đợi."), 1)) : (ns(!0),
+          rs(Xr, null, Na(rows, row => {
+            const prog = veoGetProgress(row.groupId, row.promptIdx),
+              st = row.st,
+              grp = row.group,
+              pi = row.pi;
             return ns(), rs("div", {
-              key: e,
-              "data-veo-queue-group": t.id,
-              "data-veo-queue-prompt": `${t.id}-${a}`,
-              "data-veo-queue-prompt-active": c ? "1" : null,
-              class: xn(["flex flex-col rounded px-2 py-1.5 border text-xs", d[
-                l(t, e - 1)]])
-            }, [ps("div", Yp, [ps("i", {
+              key: row.key,
+              class: xn(["flex flex-col rounded px-1.5 py-1 border text-xs", d[st] || d.pending])
+            }, [ps("div", Yp, [ps("span", qRowNum, In(row.globalIdx), 1), ps("i", {
               class: xn(["pi w-4 shrink-0", {
-                "pi-clock": "pending" === l(t, e - 1),
-                "pi-spin pi-spinner": ["running", "retrying"]
-                  .includes(l(t, e - 1)),
-                "pi-send": "submitted" === l(t, e - 1),
-                "pi-check-circle": "completed" === l(t, e - 1),
-                "pi-times-circle": "error" === l(t, e - 1)
+                "pi-clock": "pending" === st,
+                "pi-spin pi-spinner": ["running", "retrying"].includes(st),
+                "pi-send": "submitted" === st,
+                "pi-check-circle": "completed" === st,
+                "pi-times-circle": "error" === st
               }])
             }, null, 2), ps("span", {
               class: "flex-1 min-w-0 truncate",
-              title: t.promptPreviews?.[e - 1]
-            }, In(t.promptPreviews?.[e - 1] || `Prompt ${e}`), 9, Xp), ps(
-              "span", Jp, In(p(l(t, e - 1), t, e - 1)), 1), "error" === l(
-              t, e - 1) ? (ns(), rs("span", {
+              title: grp.promptPreviews?.[pi]
+            }, In(grp.promptPreviews?.[pi] || `Prompt ${row.promptIdx}`), 9, Xp), ps(
+              "span", Jp, In(p(st, grp, pi)), 1), "error" === st ? (ns(), rs("span", {
               key: 0,
               class: "shrink-0 max-w-24 text-xs text-rose-600 dark:text-rose-200",
-              title: t.results?.find(t => (t.index ?? t.promptIndex -
-                1) === e - 1)?.error
-            }, In(t.results?.find(t => (t.index ?? t.promptIndex -
-              1) === e - 1)?.error), 9, Zp)) : fs("", !0)]), o ? (
-            ns(), rs("div", Qp, [ps("div", tb, [ps("div", {
+              title: grp.results?.find(t => (t.index ?? t.promptIndex - 1) === pi)?.error
+            }, In(grp.results?.find(t => (t.index ?? t.promptIndex - 1) === pi)?.error), 9, Zp)) : fs("", !
+              0)]), prog ? (ns(), rs("div", Qp, [ps("div", tb, [ps("div", {
               class: xn([
                 "h-1.5 rounded-full transition-all duration-300",
-                "error" === l(t, e - 1) ? "bg-rose-500" :
-                "completed" === o.status ?
+                "error" === st ? "bg-rose-500" : "completed" === prog.status ?
                 "bg-green-500" : "bg-primary"
               ]),
-              style: fn(`width: ${o.percentage}%`)
+              style: fn(`width: ${Number(prog.percentage) || 0}%`)
             }, null, 6)]), ps("span", {
-              class: xn(["shrink-0 font-bold text-xs", "error" === l(
-                  t, e - 1) ? "text-rose-500" : "completed" === o
-                  .status ? "text-green-500" :
-                "text-primary"
+              class: xn(["shrink-0 font-bold text-xs", "error" === st ? "text-rose-500" :
+                "completed" === prog.status ? "text-green-500" : "text-primary"
               ])
-            }, In(o.percentage) + "% ", 3)])) : fs("", !0)], 2)
-          }), 128))])) : fs("",
-            !0)], 2);
-          var e
-        }), 128))]), ])])
+            }, In(String(Number(prog.percentage) || 0)) + "% ", 3)])) : fs("", !0)], 2)
+          }), 128))])])
       }
     }
   }),
@@ -104133,61 +104095,6 @@ function veoPersistResize(t) {
   }), Aa(() => {
     n?.disconnect(), n = null, clearTimeout(o), o = null
   }), e
-}
-
-function veoScrollWithin(t, e, n = 8) {
-  if (!t || !e || !t.contains(e)) return;
-  const o = t.getBoundingClientRect(),
-    i = e.getBoundingClientRect(),
-    a = i.top - o.top + t.scrollTop,
-    r = a + i.height,
-    s = t.scrollTop,
-    l = s + t.clientHeight;
-  a < s + n ? t.scrollTo({
-    top: Math.max(0, a - n),
-    behavior: "smooth"
-  }) : r > l - n && t.scrollTo({
-    top: r - t.clientHeight + n,
-    behavior: "smooth"
-  })
-}
-
-function veoFindScrollableAncestor(t, e) {
-  let n = t;
-  for (; n && n !== e;) {
-    if (n.classList?.contains("veo-prompt-queue-prompts") || n.classList?.contains(
-        "veo-prompt-queue-list")) return n;
-    n = n.parentElement
-  }
-  return e
-}
-
-function veoScrollQueueToActive(t, e, n) {
-  Si(() => {
-    Si(() => {
-      const o = t.value?.$el ?? t.value;
-      if (!o) return;
-      const i = e?.find(t => t.isActive || "running" === t.status || "paused" === t.status);
-      if (!i) return;
-      let a = null;
-      if ("number" == typeof i.currentPromptIndex && (a = o.querySelector(
-          `[data-veo-queue-prompt="${i.id}-${i.currentPromptIndex}"]`)), !a && (a = o
-          .querySelector(
-            `[data-veo-queue-prompt-active="1"][data-veo-queue-group="${i.id}"]`)), !a) {
-        const t = e => "running" === e || "retrying" === e || "submitted" === e;
-        if (n)
-          for (let e = 0; e < (i.totalCount ?? 0); e++)
-            if (t(n(i, e))) {
-              a = o.querySelector(`[data-veo-queue-prompt="${i.id}-${e}"]`);
-              break
-            }
-      }
-      a || (a = o.querySelector(`[data-veo-queue-group-id="${i.id}"]`));
-      if (!a) return;
-      const r = veoFindScrollableAncestor(a, o);
-      r && veoScrollWithin(r, a)
-    })
-  })
 }
 
 function veoGroupOverallProgress(t, e, n) {
