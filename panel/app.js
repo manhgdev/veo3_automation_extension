@@ -102737,10 +102737,15 @@ function Vu() {
   return {
     sendJob: async (n, o = {}) => {
       t.value = !0, e.value = null;
-      const i = o.groupId ?? `group-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
-        a = o.concurrentPrompts,
-        r = o.promptDelaySecondsMin,
-        s = o.promptDelaySecondsMax;
+      o = veoBuildResumeOptions(o.getGroups?.() ?? [], o, n);
+      const {
+        getGroups: _g,
+        ...runOpts
+      } = o, i = runOpts.groupId ?? `group-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+        a = runOpts.concurrentPrompts,
+        r = runOpts.promptDelaySecondsMin,
+        s = runOpts.promptDelaySecondsMax,
+        resumeFrom = runOpts.resumeFrom;
       return new Promise((o, l) => {
         try {
           if ("undefined" != typeof window && "undefined" != typeof chrome && chrome.runtime) {
@@ -102809,6 +102814,7 @@ function Vu() {
                   type: "AUTO_FILL_FLOW",
                   payloads: g,
                   groupId: i,
+                  resumeFrom: resumeFrom,
                   concurrentPrompts: a,
                   promptDelaySecondsMin: r,
                   promptDelaySecondsMax: s
@@ -103661,9 +103667,26 @@ const wp = {
         }
       });
       const {
-        cancelJobGroup: r
-      } = Vu(), s = t => {
-        r(t)
+        cancelJobGroup: veoCancelGroupFn,
+        pauseJobGroup: veoPauseGroupFn,
+        resumeJobGroup: veoResumeGroupFn
+      } = Vu(), veoQueueToast = jc(), veoQueueGroupAction = async (t, e) => {
+        try {
+          await t(e)
+        } catch (o) {
+          veoQueueToast.add({
+            severity: "error",
+            summary: n("common.errors.sendJobFailed"),
+            detail: o?.message,
+            life: 8e3
+          })
+        }
+      }, veoCancelGroup = t => {
+        veoCancelGroupFn(t)
+      }, veoPauseGroup = t => {
+        veoQueueGroupAction(veoPauseGroupFn, t)
+      }, veoResumeGroup = t => {
+        veoQueueGroupAction(veoResumeGroupFn, t)
       }, l = (t, e) => {
         const n = t.results?.find(t => (t.index ?? t.promptIndex - 1) === e);
         if (n) return n.success ? n.downloadComplete || "completed" === t.status ? "completed" : "submitted" :
@@ -103707,22 +103730,21 @@ const wp = {
         }),
         v = Ds(() => null != g.value),
         y = Ds(() => e.promptGroups.some(t => t.recoveryPassActive));
+      const veoScrollActiveQueue = () => {
+        const t = e.promptGroups.find(t => t.isActive || "running" === t.status || "paused" === t
+          .status);
+        t && (o.value = t.id), veoScrollQueueToActive(m, e.promptGroups, l)
+      };
       Rr(() => e.promptGroups.map(t => ({
         id: t.id,
         status: t.status,
         isActive: t.isActive,
         currentPromptIndex: t.currentPromptIndex,
         processedCount: t.processedCount
-      })), () => {
-        const t = e.promptGroups.find(t => t.isActive || "running" === t.status || "paused" === t
-          .status);
-        t && (o.value = t.id), veoScrollQueueToActive(m, e.promptGroups)
-      }, {
+      })), veoScrollActiveQueue, {
         deep: !0,
         flush: "post"
-      }), Rr(i, () => {
-        veoScrollQueueToActive(m, e.promptGroups)
-      }, {
+      }), Rr(i, veoScrollActiveQueue, {
         deep: !0,
         flush: "post"
       });
@@ -103784,22 +103806,40 @@ const wp = {
                 seconds: t.delayRemainingSeconds
               })), 1)])) : fs("", !0)
           ])]), ps("div", {
-            class: "flex flex-col gap-1",
+            class: "flex flex-row flex-wrap gap-1 justify-end",
             onClick: i[0] || (i[0] = zl(() => {}, ["stop"]))
-          }, ["queued" === t.status ? (ns(), ss(r, {
-            key: 0,
+          }, ["paused" === t.status ? (ns(), ss(r, {
+            key: "resume",
+            size: "small",
+            label: ni(n)("common.resume"),
+            severity: "warning",
+            icon: "pi pi-play",
+            text: "",
+            onClick: e => veoResumeGroup(t.id)
+          }, null, 8, ["label", "onClick"])) : fs("", !0), "running" === t.status ||
+          "queued" === t.status ? (ns(), ss(r, {
+            key: "pause",
+            size: "small",
+            label: ni(n)("common.pause"),
+            severity: "secondary",
+            icon: "pi pi-pause",
+            text: "",
+            onClick: e => veoPauseGroup(t.id)
+          }, null, 8, ["label", "onClick"])) : fs("", !0), "queued" === t.status ? (ns(), ss(r, {
+            key: "remove",
             size: "small",
             label: ni(n)("controlTab.promptGroups.actions.remove"),
             severity: "secondary",
             text: "",
-            onClick: e => s(t.id)
-          }, null, 8, ["label", "onClick"])) : "running" === t.status ? (ns(), ss(r, {
-            key: 1,
+            onClick: e => veoCancelGroup(t.id)
+          }, null, 8, ["label", "onClick"])) : fs("", !0), "running" === t.status ||
+          "paused" === t.status ? (ns(), ss(r, {
+            key: "stop",
             size: "small",
             label: ni(n)("controlTab.promptGroups.actions.stop"),
             severity: "danger",
             text: "",
-            onClick: e => s(t.id)
+            onClick: e => veoCancelGroup(t.id)
           }, null, 8, ["label", "onClick"])) : fs("", !0)])], 8, zp), o.value === t.id ? (
           ns(), rs("div", qp, ["error" === t.status && t.errorMessage ? (ns(), rs("div", {
             key: "err",
@@ -103807,16 +103847,20 @@ const wp = {
           }, In(t.errorMessage), 1)) : fs("", !0), 0 === w(t) ? (ns(), rs("div", {
             key: "empty",
             class: "px-2 py-1.5 text-xs text-muted-foreground"
-          }, In("Không có prompt trong nhóm này."), 1)) : (ns(!0), rs(Xr, {
-            key: "list"
-          }, Na(w(t), e => {
-            const o = _(t.id, e);
+          }, In("Không có prompt trong nhóm này."), 1)) : (ns(), rs("div", {
+            key: "list",
+            class: "veo-prompt-queue-prompts",
+            "data-veo-queue-prompts": t.id
+          }, [(ns(!0), rs(Xr, null, Na(w(t), e => {
+            const o = _(t.id, e),
+              a = e - 1,
+              s = l(t, a),
+              c = t.currentPromptIndex === a || ["running", "retrying", "submitted"].includes(s);
             return ns(), rs("div", {
               key: e,
               "data-veo-queue-group": t.id,
-              "data-veo-queue-prompt": `${t.id}-${e-1}`,
-              "data-veo-queue-prompt-active": ["running", "retrying"].includes(l(t, e -
-                1)) ? "1" : null,
+              "data-veo-queue-prompt": `${t.id}-${a}`,
+              "data-veo-queue-prompt-active": c ? "1" : null,
               class: xn(["flex flex-col rounded px-2 py-1.5 border text-xs", d[
                 l(t, e - 1)]])
             }, [ps("div", Yp, [ps("i", {
@@ -104091,17 +104135,57 @@ function veoPersistResize(t) {
   }), e
 }
 
-function veoScrollQueueToActive(t, e) {
+function veoScrollWithin(t, e, n = 8) {
+  if (!t || !e || !t.contains(e)) return;
+  const o = t.getBoundingClientRect(),
+    i = e.getBoundingClientRect(),
+    a = i.top - o.top + t.scrollTop,
+    r = a + i.height,
+    s = t.scrollTop,
+    l = s + t.clientHeight;
+  a < s + n ? t.scrollTo({
+    top: Math.max(0, a - n),
+    behavior: "smooth"
+  }) : r > l - n && t.scrollTo({
+    top: r - t.clientHeight + n,
+    behavior: "smooth"
+  })
+}
+
+function veoFindScrollableAncestor(t, e) {
+  let n = t;
+  for (; n && n !== e;) {
+    if (n.classList?.contains("veo-prompt-queue-prompts") || n.classList?.contains(
+        "veo-prompt-queue-list")) return n;
+    n = n.parentElement
+  }
+  return e
+}
+
+function veoScrollQueueToActive(t, e, n) {
   Si(() => {
-    const n = t.value?.$el ?? t.value;
-    if (!n) return;
-    const o = e?.find(t => t.isActive || "running" === t.status || "paused" === t.status);
-    if (!o) return;
-    const i = n.querySelector(`[data-veo-queue-prompt-active="1"][data-veo-queue-group="${o.id}"]`) ||
-      n.querySelector(`[data-veo-queue-group-id="${o.id}"]`);
-    i?.scrollIntoView({
-      block: "nearest",
-      behavior: "smooth"
+    Si(() => {
+      const o = t.value?.$el ?? t.value;
+      if (!o) return;
+      const i = e?.find(t => t.isActive || "running" === t.status || "paused" === t.status);
+      if (!i) return;
+      let a = null;
+      if ("number" == typeof i.currentPromptIndex && (a = o.querySelector(
+          `[data-veo-queue-prompt="${i.id}-${i.currentPromptIndex}"]`)), !a && (a = o
+          .querySelector(
+            `[data-veo-queue-prompt-active="1"][data-veo-queue-group="${i.id}"]`)), !a) {
+        const t = e => "running" === e || "retrying" === e || "submitted" === e;
+        if (n)
+          for (let e = 0; e < (i.totalCount ?? 0); e++)
+            if (t(n(i, e))) {
+              a = o.querySelector(`[data-veo-queue-prompt="${i.id}-${e}"]`);
+              break
+            }
+      }
+      a || (a = o.querySelector(`[data-veo-queue-group-id="${i.id}"]`));
+      if (!a) return;
+      const r = veoFindScrollableAncestor(a, o);
+      r && veoScrollWithin(r, a)
     })
   })
 }
@@ -104119,49 +104203,37 @@ function veoGroupOverallProgress(t, e, n) {
   return Math.min(100, Math.round(i / o))
 }
 
-function veoJobRunningState(t) {
-  const e = () => "function" == typeof t ? t() : t;
-  return {
-    isJobRunning: Ds(() => e().some(t => "queued" === t.status || "running" === t.status)),
-    isJobPaused: Ds(() => e().some(t => "paused" === t.status)),
-    activeGroupId: Ds(() => e().find(t => "queued" === t.status || "running" === t.status || "paused" === t
-      .status)?.id ?? null)
+function veoFindResumableGroup(t) {
+  if (!t?.length) return null;
+  for (let e = t.length - 1; e >= 0; e--) {
+    const n = t[e];
+    if ("error" === n.status || "paused" === n.status) return n;
+    if ("cancelled" === n.status && (n.processedCount ?? 0) < (n.totalCount ?? 0)) return n;
+    if ("completed" === n.status && n.results?.some(t => !t.success)) return n
   }
+  return null
 }
 
-function veoRunPauseHandlers(t) {
-  const {
-    getGroups: e,
-    isSending: n,
-    pauseJobGroup: o,
-    resumeJobGroup: i,
-    toast: a,
-    translate: r,
-    onRun: s
-  } = t, {
-    isJobRunning: l,
-    isJobPaused: c,
-    activeGroupId: d
-  } = veoJobRunningState(e), u = async t => {
-    const e = d.value;
-    if (e) try {
-      await t(e)
-    } catch (n) {
-      a.add({
-        severity: "error",
-        summary: r("common.errors.sendJobFailed"),
-        detail: n?.message,
-        life: 8e3
-      })
-    }
-  }, p = () => {
-    n.value || (c.value ? u(i) : l.value ? u(o) : s())
-  };
-  return {
-    isJobRunning: l,
-    isJobPaused: c,
-    onRunOrPause: p
+function veoBuildResumeOptions(t, e, n) {
+  if (e.groupId || e.resumeFrom) return e;
+  const o = veoFindResumableGroup(t);
+  if (!o || o.totalCount && n.length !== o.totalCount) return e;
+  const i = [];
+  for (let a = 0; a < (o.totalCount ?? n.length); a++) {
+    const t = o.results?.find(t => (t.index ?? t.promptIndex - 1) === a);
+    (!t || !t.success) && i.push(a)
   }
+  return i.length ? {
+    ...e,
+    groupId: o.id,
+    resumeFrom: {
+      totalCount: o.totalCount ?? n.length,
+      processedCount: o.results?.filter(t => t.success).length ?? o.processedCount ?? 0,
+      results: (o.results ?? []).filter(t => t.success),
+      pendingIndexes: i,
+      promptPreviews: o.promptPreviews
+    }
+  } : e
 }
 const jb = ca({
     __name: "PromptDurationControl",
@@ -123673,9 +123745,7 @@ const aC = {
         } = Fu(),
         {
           sendJob: l,
-          isSending: c,
-          pauseJobGroup: J,
-          resumeJobGroup: K
+          isSending: c
         } = Vu(),
         d = jc(),
         u = Zo(!1),
@@ -123729,7 +123799,8 @@ const aC = {
             l(i, {
               concurrentPrompts: t,
               promptDelaySecondsMin: n.settings.promptDelaySecondsMin,
-              promptDelaySecondsMax: n.settings.promptDelaySecondsMax
+              promptDelaySecondsMax: n.settings.promptDelaySecondsMax,
+              getGroups: () => n.promptGroups
             }).catch(t => {
               d.add({
                 severity: "error",
@@ -123742,19 +123813,6 @@ const aC = {
             u.value = !1
           }
         },
-        {
-          isJobRunning: P,
-          isJobPaused: O,
-          onRunOrPause: D
-        } = veoRunPauseHandlers({
-          getGroups: () => n.promptGroups,
-          isSending: c,
-          pauseJobGroup: J,
-          resumeJobGroup: K,
-          toast: d,
-          translate: o,
-          onRun: w
-        }),
         C = () => h("clear"), S = Zo(!1);
       return (e, o) => {
         const l = _a("PButton");
@@ -123839,17 +123897,15 @@ const aC = {
           onClick: ni(m)
         }, null, 8, ["label", "onClick"])) : (ns(), ss(l, {
           key: 1,
-          label: ni(c) ? e.$t("textToVideoControl.buttons.sending") : O.value ? e.$t(
-            "common.resume") : P.value ? e.$t("common.pause") : e.$t("textToVideoControl.buttons.run"),
+          label: ni(c) ? e.$t("textToVideoControl.buttons.sending") : e.$t(
+            "textToVideoControl.buttons.run"),
           class: "w-full text-xs sm:text-sm",
           size: "small",
-          severity: O.value && !ni(c) ? "warning" : P.value && !ni(c) ? "danger" : void 0,
-          icon: ni(c) ? "pi pi-spin pi-spinner" : O.value ? "pi pi-play" : P.value ? "pi pi-pause" :
-            "pi pi-play",
-          disabled: ni(c) || u.value && !P.value && !O.value,
+          icon: ni(c) ? "pi pi-spin pi-spinner" : "pi pi-play",
+          disabled: ni(c) || u.value,
           loading: ni(c),
-          onClick: D
-        }, null, 8, ["label", "severity", "icon", "disabled", "loading"]))])])]), bs(ep, {
+          onClick: w
+        }, null, 8, ["label", "icon", "disabled", "loading"]))])])]), bs(ep, {
           visible: S.value,
           "onUpdate:visible": o[3] || (o[3] = t => S.value = t)
         }, null, 8, ["visible"])], 64)
@@ -124235,9 +124291,7 @@ const zC = {
         } = Fu(),
         {
           sendJob: d,
-          isSending: u,
-          pauseJobGroup: V,
-          resumeJobGroup: W
+          isSending: u
         } = Vu(),
         p = jc(),
         b = Zo(!1),
@@ -124336,7 +124390,8 @@ const zC = {
             d(o, {
               concurrentPrompts: t,
               promptDelaySecondsMin: n.settings.promptDelaySecondsMin,
-              promptDelaySecondsMax: n.settings.promptDelaySecondsMax
+              promptDelaySecondsMax: n.settings.promptDelaySecondsMax,
+              getGroups: () => n.promptGroups
             }).catch(t => {
               p.add({
                 severity: "error",
@@ -124349,19 +124404,7 @@ const zC = {
             b.value = !1
           }
         },
-        {
-          isJobRunning: j,
-          isJobPaused: H,
-          onRunOrPause: N
-        } = veoRunPauseHandlers({
-          getGroups: () => n.promptGroups,
-          isSending: u,
-          pauseJobGroup: V,
-          resumeJobGroup: W,
-          toast: p,
-          translate: a,
-          onRun: I
-        }), A = () => o("clear"), E = Zo(!1);
+        A = () => o("clear"), E = Zo(!1);
       return (e, a) => {
         const d = _a("PButton");
         return ns(), rs(Xr, null, [ps("div", lS, [bs(sS, {
@@ -124446,17 +124489,15 @@ const zC = {
           onClick: ni(h)
         }, null, 8, ["label", "onClick"])) : (ns(), ss(d, {
           key: 1,
-          label: ni(u) ? e.$t("imageToVideoControl.buttons.sending") : H.value ? e.$t(
-            "common.resume") : j.value ? e.$t("common.pause") : e.$t("imageToVideoControl.buttons.run"),
+          label: ni(u) ? e.$t("imageToVideoControl.buttons.sending") : e.$t(
+            "imageToVideoControl.buttons.run"),
           class: "w-full text-xs sm:text-sm",
           size: "small",
-          severity: H.value && !ni(u) ? "warning" : j.value && !ni(u) ? "danger" : void 0,
-          icon: ni(u) ? "pi pi-spin pi-spinner" : H.value ? "pi pi-play" : j.value ? "pi pi-pause" :
-            "pi pi-play",
-          disabled: ni(u) || b.value && !j.value && !H.value || 0 === i.value.length || 0 === g.value || !T.value,
+          icon: ni(u) ? "pi pi-spin pi-spinner" : "pi pi-play",
+          disabled: ni(u) || b.value || 0 === i.value.length || 0 === g.value || !T.value,
           loading: ni(u),
-          onClick: N
-        }, null, 8, ["label", "severity", "icon", "disabled", "loading"]))])])]), bs(ep, {
+          onClick: I
+        }, null, 8, ["label", "icon", "disabled", "loading"]))])])]), bs(ep, {
           visible: E.value,
           "onUpdate:visible": a[4] || (a[4] = t => E.value = t)
         }, null, 8, ["visible"])], 64)
@@ -124551,9 +124592,7 @@ const zC = {
         } = Fu(),
         {
           sendJob: d,
-          isSending: u,
-          pauseJobGroup: B,
-          resumeJobGroup: q
+          isSending: u
         } = Vu(),
         p = jc(),
         b = Zo(!1),
@@ -124631,7 +124670,8 @@ const zC = {
           d(r, {
             concurrentPrompts: e,
             promptDelaySecondsMin: n.settings.promptDelaySecondsMin,
-            promptDelaySecondsMax: n.settings.promptDelaySecondsMax
+            promptDelaySecondsMax: n.settings.promptDelaySecondsMax,
+            getGroups: () => n.promptGroups
           }).catch(t => {
             p.add({
               severity: "error",
@@ -124644,19 +124684,7 @@ const zC = {
           b.value = !1
         }
       },
-      {
-        isJobRunning: F,
-        isJobPaused: U,
-        onRunOrPause: R
-      } = veoRunPauseHandlers({
-        getGroups: () => n.promptGroups,
-        isSending: u,
-        pauseJobGroup: B,
-        resumeJobGroup: q,
-        toast: p,
-        translate: i,
-        onRun: M
-      }), L = () => o("clear"), _ = Zo(!1);
+      L = () => o("clear"), _ = Zo(!1);
       return (e, i) => {
         const d = _a("PInputSwitch"),
           p = _a("PButton");
@@ -124776,18 +124804,16 @@ const zC = {
               onClick: ni(h)
             }, null, 8, ["label", "onClick"])) : (ns(), ss(p, {
               key: 1,
-              label: ni(u) ? e.$t("componentsToVideoControl.buttons.sending") : U.value ? e.$t(
-                "common.resume") : F.value ? e.$t("common.pause") : e.$t("componentsToVideoControl.buttons.run"),
+              label: ni(u) ? e.$t("componentsToVideoControl.buttons.sending") : e.$t(
+                "componentsToVideoControl.buttons.run"),
               class: "w-full text-xs sm:text-sm",
               size: "small",
-              severity: U.value && !ni(u) ? "warning" : F.value && !ni(u) ? "danger" : void 0,
-              icon: ni(u) ? "pi pi-spin pi-spinner" : U.value ? "pi pi-play" : F.value ? "pi pi-pause" :
-                "pi pi-play",
-              disabled: ni(u) || b.value && !F.value && !U.value || 0 === g.value || !t.settings.autoAddCharacterImages &&
+              icon: ni(u) ? "pi pi-spin pi-spinner" : "pi pi-play",
+              disabled: ni(u) || b.value || 0 === g.value || !t.settings.autoAddCharacterImages &&
                 !I.value && (0 === a.value.length || !ni(S)),
               loading: ni(u),
-              onClick: R
-            }, null, 8, ["label", "severity", "icon", "disabled", "loading"]))])
+              onClick: M
+            }, null, 8, ["label", "icon", "disabled", "loading"]))])
           ])
         ]), bs(ep, {
           visible: _.value,
@@ -124852,9 +124878,7 @@ const zC = {
         } = Ru(),
         {
           sendJob: l,
-          isSending: c,
-          pauseJobGroup: q,
-          resumeJobGroup: W
+          isSending: c
         } = Vu(),
         d = jc(),
         u = Zo(!1),
@@ -124899,7 +124923,8 @@ const zC = {
           l(i, {
             concurrentPrompts: t,
             promptDelaySecondsMin: n.settings.promptDelaySecondsMin,
-            promptDelaySecondsMax: n.settings.promptDelaySecondsMax
+            promptDelaySecondsMax: n.settings.promptDelaySecondsMax,
+            getGroups: () => n.promptGroups
           }).catch(t => {
             d.add({
               severity: "error",
@@ -124912,19 +124937,7 @@ const zC = {
           u.value = !1
         }
       },
-      {
-        isJobRunning: P,
-        isJobPaused: A,
-        onRunOrPause: O
-      } = veoRunPauseHandlers({
-        getGroups: () => n.promptGroups,
-        isSending: c,
-        pauseJobGroup: q,
-        resumeJobGroup: W,
-        toast: d,
-        translate: o,
-        onRun: v
-      }), y = () => h("clear"), k = Zo(!1), x = Zo(null), w = t => [x.value?.getCharacterRowBadge(t) ?? null];
+      y = () => h("clear"), k = Zo(!1), x = Zo(null), w = t => [x.value?.getCharacterRowBadge(t) ?? null];
       return (e, o) => {
         const l = _a("PButton");
         return ns(), rs(Xr, null, [ps("div", NS, [ps("div", $S, [ps("div", zS, [bs(PC, {
@@ -125000,17 +125013,15 @@ const zC = {
           onClick: ni(m)
         }, null, 8, ["label", "onClick"])) : (ns(), ss(l, {
           key: 1,
-          label: ni(c) ? e.$t("textToImageControl.buttons.sending") : A.value ? e.$t(
-            "common.resume") : P.value ? e.$t("common.pause") : e.$t("textToImageControl.buttons.run"),
+          label: ni(c) ? e.$t("textToImageControl.buttons.sending") : e.$t(
+            "textToImageControl.buttons.run"),
           class: "w-full text-xs sm:text-sm",
           size: "small",
-          severity: A.value && !ni(c) ? "warning" : P.value && !ni(c) ? "danger" : void 0,
-          icon: ni(c) ? "pi pi-spin pi-spinner" : A.value ? "pi pi-play" : P.value ? "pi pi-pause" :
-            "pi pi-play",
-          disabled: ni(c) || u.value && !P.value && !A.value || !t.textToImageForm.prompt.trim(),
+          icon: ni(c) ? "pi pi-spin pi-spinner" : "pi pi-play",
+          disabled: ni(c) || u.value || !t.textToImageForm.prompt.trim(),
           loading: ni(c),
-          onClick: O
-        }, null, 8, ["label", "severity", "icon", "disabled", "loading"]))])])]), bs(ep, {
+          onClick: v
+        }, null, 8, ["label", "icon", "disabled", "loading"]))])])]), bs(ep, {
           visible: k.value,
           "onUpdate:visible": o[3] || (o[3] = t => k.value = t)
         }, null, 8, ["visible"])], 64)
@@ -125104,9 +125115,7 @@ const zC = {
         } = Ru(),
         {
           sendJob: d,
-          isSending: u,
-          pauseJobGroup: q,
-          resumeJobGroup: H
+          isSending: u
         } = Vu(),
         p = jc(),
         b = Zo(!1),
@@ -125170,7 +125179,8 @@ const zC = {
           d(o, {
             concurrentPrompts: t,
             promptDelaySecondsMin: n.settings.promptDelaySecondsMin,
-            promptDelaySecondsMax: n.settings.promptDelaySecondsMax
+            promptDelaySecondsMax: n.settings.promptDelaySecondsMax,
+            getGroups: () => n.promptGroups
           }).catch(t => {
             p.add({
               severity: "error",
@@ -125183,19 +125193,7 @@ const zC = {
           b.value = !1
         }
       },
-      {
-        isJobRunning: N,
-        isJobPaused: D,
-        onRunOrPause: G
-      } = veoRunPauseHandlers({
-        getGroups: () => n.promptGroups,
-        isSending: u,
-        pauseJobGroup: q,
-        resumeJobGroup: H,
-        toast: p,
-        translate: i,
-        onRun: T
-      }), I = () => o("clear"), A = Zo(!1), E = Zo(null), P = t => [E.value?.getCharacterRowBadge(t) ?? null];
+      I = () => o("clear"), A = Zo(!1), E = Zo(null), P = t => [E.value?.getCharacterRowBadge(t) ?? null];
       return (e, i) => {
         const d = _a("PInputSwitch"),
           p = _a("PButton");
@@ -125301,19 +125299,17 @@ const zC = {
           onClick: ni(h)
         }, null, 8, ["label", "onClick"])) : (ns(), ss(p, {
           key: 1,
-          label: ni(u) ? e.$t("imageToImageControl.buttons.sending") : D.value ? e.$t(
-            "common.resume") : N.value ? e.$t("common.pause") : e.$t("imageToImageControl.buttons.run"),
+          label: ni(u) ? e.$t("imageToImageControl.buttons.sending") : e.$t(
+            "imageToImageControl.buttons.run"),
           class: "w-full text-xs sm:text-sm",
           size: "small",
-          severity: D.value && !ni(u) ? "warning" : N.value && !ni(u) ? "danger" : void 0,
-          icon: ni(u) ? "pi pi-spin pi-spinner" : D.value ? "pi pi-play" : N.value ? "pi pi-pause" :
-            "pi pi-play",
-          disabled: ni(u) || b.value && !N.value && !D.value || 0 === a.value.length && !t.settings
+          icon: ni(u) ? "pi pi-spin pi-spinner" : "pi pi-play",
+          disabled: ni(u) || b.value || 0 === a.value.length && !t.settings
             .autoAddCharacterImages || 0 === g.value || !t.settings.autoAddCharacterImages &&
             !ni(C),
           loading: ni(u),
-          onClick: G
-        }, null, 8, ["label", "severity", "icon", "disabled", "loading"]))])])]), bs(ep, {
+          onClick: T
+        }, null, 8, ["label", "icon", "disabled", "loading"]))])])]), bs(ep, {
           visible: A.value,
           "onUpdate:visible": i[5] || (i[5] = t => A.value = t)
         }, null, 8, ["visible"])], 64)
@@ -125408,9 +125404,7 @@ const zC = {
         } = Fu(),
         {
           sendJob: d,
-          isSending: u,
-          pauseJobGroup: q,
-          resumeJobGroup: H
+          isSending: u
         } = Vu(),
         p = jc(),
         b = Zo(!1),
@@ -125488,7 +125482,8 @@ const zC = {
           d(e, {
             concurrentPrompts: 1,
             promptDelaySecondsMin: n.settings.promptDelaySecondsMin,
-            promptDelaySecondsMax: n.settings.promptDelaySecondsMax
+            promptDelaySecondsMax: n.settings.promptDelaySecondsMax,
+            getGroups: () => n.promptGroups
           }).catch(t => {
             p.add({
               severity: "error",
@@ -125501,19 +125496,7 @@ const zC = {
           b.value = !1
         }
       },
-      {
-        isJobRunning: N,
-        isJobPaused: D,
-        onRunOrPause: G
-      } = veoRunPauseHandlers({
-        getGroups: () => n.promptGroups,
-        isSending: u,
-        pauseJobGroup: q,
-        resumeJobGroup: H,
-        toast: p,
-        translate: i,
-        onRun: M
-      }), L = () => o("clear"), _ = Zo(!1);
+      L = () => o("clear"), _ = Zo(!1);
       return (e, i) => {
         const d = _a("PInputSwitch"),
           p = _a("PButton");
@@ -125631,18 +125614,16 @@ const zC = {
               onClick: ni(h)
             }, null, 8, ["label", "onClick"])) : (ns(), ss(p, {
               key: 1,
-              label: ni(u) ? e.$t("agentAutomationControl.buttons.sending") : D.value ? e.$t(
-                "common.resume") : N.value ? e.$t("common.pause") : e.$t("agentAutomationControl.buttons.run"),
+              label: ni(u) ? e.$t("agentAutomationControl.buttons.sending") : e.$t(
+                "agentAutomationControl.buttons.run"),
               class: "w-full text-xs sm:text-sm",
               size: "small",
-              severity: D.value && !ni(u) ? "warning" : N.value && !ni(u) ? "danger" : void 0,
-              icon: ni(u) ? "pi pi-spin pi-spinner" : D.value ? "pi pi-play" : N.value ? "pi pi-pause" :
-                "pi pi-play",
-              disabled: ni(u) || b.value && !N.value && !D.value || 0 === g.value || !t.settings.autoAddCharacterImages &&
+              icon: ni(u) ? "pi pi-spin pi-spinner" : "pi pi-play",
+              disabled: ni(u) || b.value || 0 === g.value || !t.settings.autoAddCharacterImages &&
                 !I.value && a.value.length > 0 && !ni(S),
               loading: ni(u),
-              onClick: G
-            }, null, 8, ["label", "severity", "icon", "disabled", "loading"]))])
+              onClick: M
+            }, null, 8, ["label", "icon", "disabled", "loading"]))])
           ])
         ]), bs(ep, {
           visible: _.value,

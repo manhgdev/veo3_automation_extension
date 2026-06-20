@@ -3844,6 +3844,18 @@
       const n = t ? e * (.6 + .8 * Math.random()) : e;
       return new Promise(e => setTimeout(e, n))
     },
+    veoFlowStepState = {
+      chain: Promise.resolve()
+    },
+    veoRunFlowStepExclusive = async e => {
+      const t = veoFlowStepState.chain.then(() => e());
+      return veoFlowStepState.chain = t.then(() => {}, () => {}), t
+    },
+    veoClearPromptEditor = async () => {
+      try {
+        await h("a", "KeyA", 65, 2), await p(120), await h("Backspace", "Backspace", 8), await p(200)
+      } catch {}
+    },
     f = async e => {
       try {
         const t = await chrome.runtime.sendMessage({
@@ -3854,17 +3866,17 @@
       } catch {
         return !1
       }
-    }, h = async (e, t, n) => {
-      let r, o;
-      "@" === e && (r = "@", o = 8);
+    }, h = async (e, t, n, r) => {
+      let o, a;
+      "@" === e && (o = "@", a = 8);
       try {
         const i = await chrome.runtime.sendMessage({
           type: "CK",
           key: e,
           code: t,
           keyCode: n,
-          text: r,
-          modifiers: o
+          text: o,
+          modifiers: void 0 !== r ? r : a
         });
         return !!i?.success
       } catch {
@@ -3906,6 +3918,7 @@
       const t = e[0];
       if (!e.is(":visible")) return !1;
       if (e.is(":disabled")) return !1;
+      if ("true" === (t.getAttribute?.("aria-disabled") || "").toLowerCase()) return !1;
       const n = t.getBoundingClientRect();
       if (0 === n.width || 0 === n.height) return !1;
       const r = window.getComputedStyle(t);
@@ -3913,6 +3926,22 @@
         .top >= 0 && n.left >= 0 && n.bottom <= (window.innerHeight || document
           .documentElement.clientHeight) && (n.right, window.innerWidth || document
           .documentElement.clientWidth), !0)
+    }, veoDismissFlowOverlays = async e => {
+      try {
+        await h("Escape", "Escape", 27), await p(400)
+      } catch {}
+      const t = i(e.downloadDoneButton);
+      if (t.length && y(t)) try {
+        await w(e.downloadDoneButton, "Close overlay", 4e3), await p(400)
+      } catch {}
+    }, veoWaitSubmitReady = async (e, t = 2e4) => {
+      const n = Date.now() + t;
+      for (; Date.now() < n;) {
+        const t = i(e);
+        if (t.length && y(t)) return t;
+        await p(250)
+      }
+      return null
     }, v = async (e, t = 5e3, n = 100, r = !0) => {
       const o = Date.now();
       for (; Date.now() - o < t;) {
@@ -3965,7 +3994,18 @@
           });
           var n, r
         }), n
-      }, T = async e => {
+      }, veoStableFlowSettings = e => {
+        const t = [
+          ["mode", e.mode],
+          ["aspectRatio", e.aspectRatio],
+          ["model", e.model],
+          ["outputCount", e.outputCount]
+        ];
+        return e.videoOption && t.push(["videoOption", e.videoOption]), t.push(["flowAgent",
+          "agentAutomation" === e.mode ? "1" : "0"
+        ]), t
+      }, veoNeedsFlowSettings = (e, t) => !t?.flowSettingsApplied || C(veoStableFlowSettings(e), !1),
+      T = async e => {
         if (!e || 0 === e.length) return null;
         const t = e[e.length - 1];
         try {
@@ -4085,87 +4125,89 @@
             cancelled: !0,
             error: "Cancelled"
           };
-          if (i(n.selectors.removeSelectedImagesButton).length > 0 && await w(n
-              .selectors.removeSelectedImagesButton,
-              "Remove selected images and videos"), "agentAutomation" !== e.mode &&
-            i(n.selectors.disableAgentModeButton).length > 0 ? (await w(n.selectors
-              .disableAgentModeButton, "Disable Agent Mode"), await p(1e3), i(n
-              .selectors.disableAgentModeButton).length > 0 && await w(n.selectors
-              .disableAgentModeButton, "Disable Agent Mode")) :
-            "agentAutomation" === e.mode && i(n.selectors.enableAgentModeButton)
-            .length > 0 && (await w(n.selectors.enableAgentModeButton,
-              "Enable Agent Mode"), await p(1e3), i(n.selectors
-              .enableAgentModeButton).length > 0 && await w(n.selectors
-              .enableAgentModeButton, "Enable Agent Mode")), C([
-              ["uiMode", "open"]
-            ], !0) && (S("⏳ Step 2.1: PreConfigure UI Mode"), await O(n), S(
-              "✅ UI Mode configured")), e.mode.includes("ToVideo") && C([
-              ["mode", e.mode],
-              ["aspectRatio", e.aspectRatio],
-              ["model", e.model],
-              ["videoOption", e.videoOption],
-              ["outputCount", e.outputCount],
-              ["speaker", e.speaker],
-              ["characters", e.characters]
-            ])) {
-            S("⏳ Step 2: Configuring video..."), r[1].status = "running";
-            if (!(await N(e, t, n))) return t && t() ? (r[1].status = "error", r[1]
-              .error = "Cancelled", {
-                success: !1,
-                steps: r,
-                cancelled: !0,
-                error: "Cancelled"
-              }) : (r[1].status = "error", r[1].error =
-              "Failed to configure video", {
-                success: !1,
-                steps: r,
-                error: "Failed to configure video"
-              });
-            r[1].status = "completed", S("✅ Video configured")
-          } else if (e.mode.includes("ToImage") && C([
-              ["mode", e.mode],
-              ["aspectRatio", e.aspectRatio],
-              ["model", e.model],
-              ["outputCount", e.outputCount],
-              ["characters", e.characters]
-            ]) || e.outputPreviousPrompt?.nextPromptEditImage) {
-            S("⏳ Step 2: Configuring image..."), r[1].status = "running";
+          const jobGroup = Z.find(t => t.id === e.groupId),
+            needsFullSettings = veoNeedsFlowSettings(e, jobGroup),
+            needsEditImageOnly = !needsFullSettings && !!e.outputPreviousPrompt
+            ?.nextPromptEditImage;
+          if (needsFullSettings) {
+            if (i(n.selectors.removeSelectedImagesButton).length > 0 && await w(n
+                .selectors.removeSelectedImagesButton,
+                "Remove selected images and videos"), "agentAutomation" !== e.mode &&
+              i(n.selectors.disableAgentModeButton).length > 0 ? (await w(n.selectors
+                .disableAgentModeButton, "Disable Agent Mode"), await p(1e3), i(n
+                .selectors.disableAgentModeButton).length > 0 && await w(n.selectors
+                .disableAgentModeButton, "Disable Agent Mode")) :
+              "agentAutomation" === e.mode && i(n.selectors.enableAgentModeButton)
+              .length > 0 && (await w(n.selectors.enableAgentModeButton,
+                "Enable Agent Mode"), await p(1e3), i(n.selectors
+                .enableAgentModeButton).length > 0 && await w(n.selectors
+                .enableAgentModeButton, "Enable Agent Mode")), C([
+                ["uiMode", "open"]
+              ], !0) && (S("⏳ Step 2.1: PreConfigure UI Mode"), await O(n), S(
+                "✅ UI Mode configured")), e.mode.includes("ToVideo")) {
+              S("⏳ Step 2: Configuring video..."), r[1].status = "running";
+              if (!(await N(e, t, n))) return t && t() ? (r[1].status = "error", r[1]
+                .error = "Cancelled", {
+                  success: !1,
+                  steps: r,
+                  cancelled: !0,
+                  error: "Cancelled"
+                }) : (r[1].status = "error", r[1].error =
+                "Failed to configure video", {
+                  success: !1,
+                  steps: r,
+                  error: "Failed to configure video"
+                });
+              r[1].status = "completed", S("✅ Video configured")
+            } else if (e.mode.includes("ToImage")) {
+              S("⏳ Step 2: Configuring image..."), r[1].status = "running";
+              if (!(await L(e, t, n))) return t && t() ? (r[1].status = "error", r[1]
+                .error = "Cancelled", {
+                  success: !1,
+                  steps: r,
+                  cancelled: !0,
+                  error: "Cancelled"
+                }) : (r[1].status = "error", r[1].error =
+                "Failed to configure image", {
+                  success: !1,
+                  steps: r,
+                  error: "Failed to configure image"
+                });
+              r[1].status = "completed", S("✅ Image configured")
+            } else if (e.mode.includes("agentAutomation")) {
+              S("⏳ Step 2: Configuring agent automation..."), r[1].status = "running";
+              if (!(await _(e, t, n))) return t && t() ? (r[1].status = "error", r[1]
+                .error = "Cancelled", {
+                  success: !1,
+                  steps: r,
+                  cancelled: !0,
+                  error: "Cancelled"
+                }) : (r[1].status = "error", r[1].error =
+                "Failed to configure agent automation", {
+                  success: !1,
+                  steps: r,
+                  error: "Failed to configure agent automation"
+                });
+              r[1].status = "completed", S("✅ Agent automation configured")
+            }
+            C(veoStableFlowSettings(e), !0), jobGroup && (jobGroup.flowSettingsApplied = !0)
+          } else if (needsEditImageOnly) {
+            S("⏳ Step 2: Opening image edit for concat chain..."), r[1].status = "running";
             if (!(await L(e, t, n))) return t && t() ? (r[1].status = "error", r[1]
               .error = "Cancelled", {
                 success: !1,
                 steps: r,
                 cancelled: !0,
                 error: "Cancelled"
-              }) : (r[1].status = "error", r[1].error =
-              "Failed to configure image", {
+              }) : (r[1].status = "error", r[1].error = "Failed to configure image", {
                 success: !1,
                 steps: r,
                 error: "Failed to configure image"
               });
-            r[1].status = "completed", S("✅ Image configured")
-          } else if (e.mode.includes("agentAutomation") && C([
-              ["mode", e.mode],
-              ["aspectRatio", e.aspectRatio],
-              ["model", e.model],
-              ["outputCount", e.outputCount],
-              ["characters", e.characters]
-            ])) {
-            S("⏳ Step 2: Configuring agent automation..."), r[1].status = "running";
-            if (!(await _(e, t, n))) return t && t() ? (r[1].status = "error", r[1]
-              .error = "Cancelled", {
-                success: !1,
-                steps: r,
-                cancelled: !0,
-                error: "Cancelled"
-              }) : (r[1].status = "error", r[1].error =
-              "Failed to configure agent automation", {
-                success: !1,
-                steps: r,
-                error: "Failed to configure agent automation"
-              });
-            r[1].status = "completed", S("✅ Agent automation configured")
-          }
-          if (e.characters && e.characters.length > 0)
+            r[1].status = "completed", S("✅ Image edit ready")
+          } else S("✅ Settings unchanged — skip config, fill prompt only"), r[1].status =
+            "completed", r[1].name = "Configure (Skipped)";
+          if (needsFullSettings && e.characters && e.characters.length > 0)
             for (let r = 0; r < e.characters.length; r++) {
               S(
               `Selecting character ${r+1}/${e.characters.length}: ${e.characters[r]}...`);
@@ -4177,8 +4219,9 @@
               S(
               `Uploading image ${r+1}/${e.images.length}: ${e.images[r].name}...`);
               await M(e, r, n, t) ? S(`✅ Image ${r+1} uploaded successfully`) : A(
-                `⚠️ Failed to upload image ${r+1}, but continuing...`)
-            } else A("No images provided");
+                `⚠️ Failed to upload image ${r+1}, but continuing...`);
+            await veoDismissFlowOverlays(n.selectors), await p(800, !0)
+          } else A("No images provided");
           if (t && t()) return S("❌ Automation cancelled before filling prompt"), {
             success: !1,
             steps: r,
@@ -4186,39 +4229,49 @@
             error: "Cancelled"
           };
           S("⏳ Step 3: Filling prompt..."), r[2].status = "running";
-          const a = Z.find(t => t.id === e.groupId);
-          a && (a.knownTileIdsBeforeSubmit = new Set(Ce(n.selectors)));
-          if (!(await F(e, n))) return r[2].status = "error", r[2].error =
+          let tileResult = {
+            success: !1,
+            tileIds: []
+          };
+          const stepResult = await veoRunFlowStepExclusive(async () => {
+            if (!(await F(e, n))) return "fill_fail";
+            if (r[2].status = "completed", S("✅ Prompt filled"), t && t()) return "cancelled";
+            S("⏳ Step 4: Locating tile IDs..."), r[3].status = "running";
+            return tileResult = await H(e, t, n), "ok"
+          });
+          if ("fill_fail" === stepResult) return r[2].status = "error", r[2].error =
             "Failed to fill prompt", {
               success: !1,
               steps: r,
               error: "Failed to fill prompt"
             };
-          if (r[2].status = "completed", S("✅ Prompt filled"), S(
-              "⏳ Waiting for video generation to start..."), t && t()) return S(
-            "❌ Automation cancelled before downloading video"), {
+          if ("cancelled" === stepResult) return S(
+            "❌ Automation cancelled before locating tiles"), {
             success: !1,
             steps: r,
             cancelled: !0,
             error: "Cancelled"
           };
-          await p(5e3), S("⏳ Step 4: Locating tile IDs..."), r[3].status =
-          "running";
-          const o = await H(e, t, n);
-          if (o.fatal) {
+          if (t && t()) return S("❌ Automation cancelled before downloading video"), {
+            success: !1,
+            steps: r,
+            cancelled: !0,
+            error: "Cancelled"
+          };
+          if (tileResult.fatal) {
             const t = Z.find(t => t.id === e.groupId);
-            return t && veoAbortJobOnFatal(t, o.error, re), {
+            return t && veoAbortJobOnFatal(t, tileResult.error, re), {
               success: !1,
               steps: r,
               fatal: !0,
-              error: o.error,
+              error: tileResult.error,
               cancelled: !0
             }
           }
-          return o.success ? (r[3].status = "completed", {
+          return tileResult.success ? (r[3].status = "completed", {
             success: !0,
             steps: r,
-            tileIds: o.tileIds
+            tileIds: tileResult.tileIds
           }) : t && t() ? (r[3].status = "error", r[3].error = "Cancelled", {
             success: !1,
             steps: r,
@@ -4229,13 +4282,13 @@
             steps: r,
             error: "Could not find tile IDs"
           })
-        } catch (o) {
-          D("❌ Automation failed:", o);
+        } catch (err) {
+          D("❌ Automation failed:", err);
           const e = r.find(e => "running" === e.status);
-          return e && (e.status = "error", e.error = String(o)), {
+          return e && (e.status = "error", e.error = String(err)), {
             success: !1,
             steps: r,
-            error: String(o)
+            error: String(err)
           }
         }
       }, P = e => new Promise(async t => {
@@ -4536,12 +4589,18 @@
       "Enter", "Enter", 13), await p(500)
   }, F = async (e, t) => {
     try {
-      const n = t.selectors;
-      S("📝 Starting to fill prompt...");
-      const r = await v(n.promptTextarea);
+      const n = t.selectors,
+        u = !!(e.images && e.images.length > 0);
+      S("📝 Starting to fill prompt..."), await veoDismissFlowOverlays(n);
+      const r = await v(n.promptTextarea, 1e4, 150);
       if (!r || 0 === r.length) return D(
         "Could not find prompt editor (div[role='textbox'])"), !1;
-      await w(n.promptTextarea, "Prompt textarea"), await p(1e3, !0);
+      try {
+        await w(n.promptTextarea, "Prompt textarea", 8e3)
+      } catch {
+        A("⚠️ Prompt textarea click failed, trying to continue...")
+      }
+      await p(800, !0), await veoClearPromptEditor();
       if ("imageToVideo" === e.mode || e.outputPreviousPrompt?.extractedFrame)
         await f(e.prompt);
       else {
@@ -4616,8 +4675,10 @@
             const o = e.prompt.substring(n, r.index + r.length);
             if (o && (await f(o), await p(100)), await f(" "), await p(100),
               "image" === r.type) {
-              const n = e.images[r.targetIndex];
-              await q(n.name, t)
+              if (!u) {
+                const n = e.images[r.targetIndex];
+                await q(n.name, t)
+              }
             } else if ("character" === r.type) {
               const n = e.characters[r.targetIndex];
               await B(n, t)
@@ -4628,43 +4689,52 @@
             const t = e.prompt.substring(n);
             await f(t), await p(100)
           }
-        } else e.images && e.images.length > 0 && await (async (e, t) => {
-          S(
-          `🎯 Fallback: Mentioning all ${e.length} uploaded images at start...`);
-          for (const n of e) n.name && (await q(n.name, t), await f(" "),
-            await p(200))
-        })(e.images, t), e.characters && e.characters.length > 0 && await (
-        async (e, t) => {
+        } else u ? (S(`📝 ${e.images.length} image(s) attached — typing prompt only`), e
+          .characters && e.characters.length > 0 && await (async (e, t) => {
+            S(
+            `🎯 Mentioning all ${e.length} characters at start...`);
+            for (const n of e) n && (await B(n, t), await f(" "), await p(200))
+          })(e.characters, t), await f(e.prompt)) : (e.images && e.images.length >
+          0 && await (async (e, t) => {
+            S(
+            `🎯 Fallback: Mentioning all ${e.length} uploaded images at start...`);
+            for (const n of e) n.name && (await q(n.name, t), await f(" "),
+              await p(200))
+          })(e.images, t), e.characters && e.characters.length > 0 && await (
+          async (e, t) => {
             S(
             `🎯 Fallback: Mentioning all ${e.length} characters at start...`);
             for (const n of e) n && (await B(n, t), await f(" "), await p(
               200))
-          })(e.characters, t), await f(e.prompt)
+          })(e.characters, t), await f(e.prompt))
       }
-      S(`✍️  Filled prompt: ${e.prompt.substring(0,50)}...`), await p(1e3, !0);
-      const o = await v(n.submitButton);
-      if (!o || 0 === o.length) return A("Could not find submit button"), !1;
-      if (Math.random() < .2 ? await w(n.submitButton, "Submit button") : await h(
-          "Enter", "Enter", 13), e.outputPreviousPrompt?.tileIds && e
-        .outputPreviousPrompt.tileIds.length > 0) {
+      S(`✍️  Filled prompt: ${e.prompt.substring(0,50)}...`), await p(1200, !0);
+      e.knownTileIdsBeforeSubmit = new Set(Ce(n)), S(
+        `📸 Snapshot ${e.knownTileIdsBeforeSubmit.size} tile(s) before submit`);
+      await veoDismissFlowOverlays(n);
+      const o = await veoWaitSubmitReady(n.submitButton, 2e4);
+      if (!o || 0 === o.length) return A(
+        "Could not find submit button — kiểm tra prompt/ảnh đã sẵn sàng chưa"), !1;
+      try {
+        await w(n.submitButton, "Submit button", 8e3)
+      } catch {
+        S("⚠️ Click submit failed, trying Enter..."), await h("Enter", "Enter", 13)
+      }
+      if (e.outputPreviousPrompt?.tileIds && e.outputPreviousPrompt.tileIds.length > 0) {
         const e = i(n.downloadDoneButton);
         e && e.length > 0 && (S(
             "❌ Not in Last Image To Image mode, skipping configuration..."),
           await w(n.downloadDoneButton, "Exit button"))
       }
-      return await p(2e3), await (async (e, t = 3e4, n = 200, r) => {
-        const o = Date.now();
-        for (; Date.now() - o < t;) {
-          if (r?.groupId) {
-            const e = Z.find(e => e.id === r.groupId);
-            if (e && veoAbortJobOnFatal(e, null, re)) return !1
-          }
+      return await p(2e3), await (async (e, t = 3e4, n = 200) => {
+        const r = Date.now();
+        for (; Date.now() - r < t;) {
           const t = i(e);
           if (!y(t)) return !0;
           await p(n)
         }
-        return !1
-      })(n.stopButton, 9e5, 200, e), !0
+        return A("Submit may have failed — stop button still visible"), !0
+      })(n.stopButton, 9e5, 200), !0
     } catch (n) {
       return D("Error in fillFlowPrompt:", n), !1
     }
@@ -4673,7 +4743,19 @@
     return i(e.outputItems).each((e, n) => {
       const r = i(n).attr("data-tile-id");
       r && t.push(r)
+    }), t.length || document.querySelectorAll("[data-tile-id]").forEach(e => {
+      const n = e.getAttribute("data-tile-id");
+      n && t.push(n)
     }), t
+  }, veoFindNewTileIds = (e, t, n) => {
+    const r = [];
+    return i(e.outputItems).each((e, o) => {
+      const i = o.getAttribute("data-tile-id");
+      i && !t.has(i) && !n.has(i) && r.push(i)
+    }), r.length || document.querySelectorAll("[data-tile-id]").forEach(e => {
+      const o = e.getAttribute("data-tile-id");
+      o && !t.has(o) && !n.has(o) && !r.includes(o) && r.push(o)
+    }), r
   }, H = async (e, t, n) => {
     if (!n) return {
       success: !1,
@@ -4681,12 +4763,12 @@
     };
     const r = n.selectors,
       o = Z.find(t => t.id === e.groupId),
-      a = o?.knownTileIdsBeforeSubmit ?? e.knownTileIdsBeforeSubmit ?? new Set,
+      a = e.knownTileIdsBeforeSubmit ?? o?.knownTileIdsBeforeSubmit ?? new Set,
       s = o?.claimedTileIds ?? new Set,
       c = Math.max(1, Number(e.outputCount) || 1);
     try {
       let n = 0;
-      const u = 60;
+      const u = 120;
       for (; n < u;) {
         if (t && t()) return {
           success: !1,
@@ -4699,25 +4781,22 @@
           fatal: !0,
           error: o.fatalError
         };
-        const e = [];
-        i(r.outputItems).each((t, n) => {
-          const r = i(n).attr("data-tile-id");
-          r && !a.has(r) && !s.has(r) && e.push(r)
-        });
-        if (e.length >= c) {
-          const t = e.slice(0, c);
-          return t.forEach(e => s.add(e)), {
+        const l = veoFindNewTileIds(r, a, s);
+        if (l.length >= c) {
+          const t = l.slice(0, c);
+          return o && t.forEach(e => s.add(e)), {
             success: !0,
             tileIds: t
           }
         }
-        if (1 === c && e.length > 0) return s.add(e[0]), {
+        if (1 === c && l.length > 0) return o && s.add(l[0]), {
           success: !0,
-          tileIds: [e[0]]
+          tileIds: [l[0]]
         };
-        S(`⏳ Waiting for new tiles... attempt ${n+1}/${u} (${e.length}/${c})`), n++, await p(500)
+        S(`⏳ Waiting for new tiles... attempt ${n+1}/${u} (${l.length}/${c}, known=${a.size})`), n++, await p(
+          500)
       }
-      return A("Could not find tile IDs"), {
+      return A(`Could not find tile IDs (${a.size} known before submit)`), {
         success: !1,
         tileIds: []
       }
@@ -4726,6 +4805,69 @@
         success: !1,
         tileIds: []
       }
+    }
+  }, veoScrollTileIntoView = e => {
+    try {
+      const t = e?.get?.(0) ?? e;
+      t?.scrollIntoView?.({
+        block: "nearest",
+        inline: "nearest",
+        behavior: "instant"
+      })
+    } catch {}
+  }, veoInspectTile = (e, t) => {
+    if (!e || !e.length) return {
+      ready: !1,
+      pct: 0,
+      resource: null,
+      error: !1
+    };
+    const n = e.find("video").toArray(),
+      r = e.find("img").toArray();
+    for (const e of n)
+      if (e.src && e.src.length > 8 && (e.readyState >= 2 || e.duration > 0 || e.src.startsWith(
+          "blob:"))) return {
+        ready: !0,
+        pct: 100,
+        resource: e,
+        error: !1
+      };
+    for (const e of r)
+      if (e.src && e.src.length > 8 && (e.naturalWidth > 0 || e.complete)) return {
+        ready: !0,
+        pct: 100,
+        resource: e,
+        error: !1
+      };
+    const o = e.find("div").filter(function() {
+        return /^\d+%$/.test(i(this).text().trim())
+      }),
+      a = e.find(t.tileOnQueue);
+    if (o.length) {
+      const e = o.first().text().trim().match(/^(\d+)%$/);
+      return {
+        ready: !1,
+        pct: e ? parseInt(e[1], 10) : 0,
+        resource: null,
+        error: !1
+      }
+    }
+    if (a.length) return {
+      ready: !1,
+      pct: 5,
+      resource: null,
+      error: !1
+    };
+    return /failed|error|lỗi|không thành công/i.test(e.text().toLowerCase()) ? {
+      ready: !1,
+      pct: 0,
+      resource: null,
+      error: !0
+    } : {
+      ready: !1,
+      pct: 0,
+      resource: null,
+      error: !1
     }
   }, W = async (e, t, n, r) => {
     if (!r) return {
@@ -4737,7 +4879,9 @@
     try {
       const r = t.mode.includes("ToVideo"),
         a = t.outputCount;
-      let s = 0;
+      let s = 0,
+        veoLastPct = -1,
+        veoStallCount = 0;
       const c = 150;
       for (; s < c;) {
         if (n && n()) return {
@@ -4753,49 +4897,36 @@
           fatal: !0,
           error: jobGroup.fatalError
         };
-        const c = e.map(e => i(o.tileByIdTemplate.replace("{tileId}", e))
-          .first()).filter(e => e.length > 0);
-        if (0 === c.length) {
+        const u = e.map(e => i(o.tileByIdTemplate.replace("{tileId}", e)).first()).filter(e => e
+          .length > 0);
+        if (0 === u.length) {
           S(`⏳ Attempt ${s+1} - tiles not in DOM yet...`), s++, await p(2e3);
           continue
         }
-        let u = [],
-          l = [],
-          d = 0;
-        const f = [];
-        for (let t = 0; t < c.length; t++) {
-          let n = c[t];
-          const r = e[t];
-          let a = n.find("video").toArray(),
-            s = n.find("img").toArray(),
-            h = a.length > 0 || s.length > 0,
-            g = n.find("div").filter(function() {
-              return /^\d+%$/.test(i(this).text().trim())
-            });
-          const m = n.find(o.tileOnQueue);
-          let y = g.length > 0 || m.length > 0;
-          for (let e = 0; e < 3 && !y && !h; e++) e > 0 && await p(1e3), n =
-            i(o.tileByIdTemplate.replace("{tileId}", r)).first(), 0 !== n
-            .length && (a = n.find("video").toArray(), s = n.find("img")
-              .toArray(), h = a.length > 0 || s.length > 0, g = n.find("div")
-              .filter(function() {
-                return /^\d+%$/.test(i(this).text().trim())
-              }), y = g.length > 0);
-          if (y || h)
-            if (y) {
-              const e = g.first().text().trim().match(/^(\d+)%$/);
-              e && (d += parseInt(e[1], 10))
-            } else h && (a.length > 0 ? u.push(a[0]) : s.length > 0 && l.push(s[0]), d += 100);
-          else S(
-            `⚠️ Tile ${t+1} error (no % and no image/video after 3 retries): ${r}`
-            ), f.push(r)
+        let l = [],
+          d = [],
+          f = 0,
+          h = [],
+          g = 0;
+        for (let n = 0; n < u.length; n++) {
+          let a = u[n];
+          const s = e[n];
+          veoScrollTileIntoView(a);
+          let c = veoInspectTile(a, o);
+          for (let e = 0; e < 3 && !c.ready && !c.error && 0 === c.pct; e++) e > 0 && await p(
+            800), a = i(o.tileByIdTemplate.replace("{tileId}", s)).first(), veoScrollTileIntoView(
+            a), c = veoInspectTile(a, o);
+          if (c.error) h.push(s);
+          else if (c.ready) r ? l.push(c.resource) : d.push(c.resource), g++, f += 100;
+          else f += c.pct
         }
-        const h = Math.round(d / c.length),
-          g = (r ? u : l).slice(0, a),
-          m = g.length + f.length;
+        const m = Math.round(f / u.length);
+        veoStallCount = m === veoLastPct ? veoStallCount + 1 : 0, veoLastPct = m;
+        const y = (r ? l : d).slice(0, a),
+          x = y.length + h.length;
         if (S(
-            `⏳ Generation: ${h}% — ${g.length}/${a} ready${f.length>0?`, ${f.length} tile(s) error (no % and no resource)`:""}`
-            ), m >= a) {
+            `⏳ Generation: ${m}% — ${y.length}/${a} ready${h.length>0?`, ${h.length} tile(s) error`:""}`
+            ), g >= a || x >= a || m >= 99 && g > 0 || veoStallCount >= 15 && g > 0) {
           try {
             chrome.runtime.sendMessage({
               type: "VIDEO_GENERATION_PROGRESS",
@@ -4810,8 +4941,8 @@
           } catch {}
           return {
             success: !0,
-            resourceElements: g,
-            tileIdsError: f
+            resourceElements: y,
+            tileIdsError: h
           }
         }
         try {
@@ -4820,7 +4951,7 @@
             data: {
               groupId: t.groupId,
               promptIndex: t.promptIndex,
-              percentage: h,
+              percentage: m,
               status: "generating",
               prompt: t.prompt
             }
@@ -4867,11 +4998,7 @@
         };
         return A(
         `⚠️ All tiles have warning for prompt ${t.promptIndex}, need retry`
-        ), await chrome.runtime.sendMessage({
-        type: "CS"
-      }).catch(() => {}), await p(3e3), await w(o.openProfileInfoButton,
-        "Open profile info"), await w(o.closeProfileInfoButton,
-        "Exit button"), {
+        ), await p(3e3), {
         success: !1,
         error: "Prompt generation failed"
       }
@@ -4912,8 +5039,8 @@
       }), S(`📁 Download folder set: ${g||"(default)"}`);
       const y = l.map(e => i(o.tileByIdTemplate.replace("{tileId}", e))
         .first()).filter(e => e.length > 0).map(e => e[0]);
-      if ("1080" === t.autoDownloadResourceQuality || "2k" === t
-        .autoDownloadResourceQuality || "4k" === t
+      if ("1080" === t.autoDownloadResourceQuality || "720" === t.autoDownloadResourceQuality ||
+        "2k" === t.autoDownloadResourceQuality || "4k" === t
         .autoDownloadResourceQuality) {
         let e;
         switch (S(
@@ -4974,12 +5101,36 @@
       S(
       `📥 Downloading ${x.length} resource(s) for prompt ${t.promptIndex}...`);
       const C = "abcdefghijklmnopqrstuvwxyz".split("");
+      let R = 0;
       for (let e = 0; e < x.length; e++) {
         if (n && n()) return S("❌ Resource download cancelled"), {
           success: !1,
           cancelled: !0
         };
-        const r = x[e].src;
+        let r = x[e].src;
+        if (!r && b && o.quality1080Option) {
+          A(`⚠️ Resource ${e+1} has no src — trying Flow UI download (1080)...`);
+          const n = l[e];
+          if (n) try {
+            const i = o.tileByIdTemplate.replace("{tileId}", n),
+              a = t.maxRetries ?? 3;
+            for (let s = 1; s <= a; s++) {
+              try {
+                await m(i, `Tile ${e+1} hover`), await v(`${i} ${o.moreOptionsButtonInHoverTile}`) &&
+                  await w(`${i} ${o.moreOptionsButtonInHoverTile}`, "Download menu"), await v(o
+                    .downloadButtonInHoverTile) && await m(o.downloadButtonInHoverTile,
+                    "Download button"), await w(o.quality1080Option, "1080 option"), R++, S(
+                    `✅ Tile ${e+1}: UI download initiated (1080 fallback)`);
+                break
+              } catch (c) {
+                s < a && await p(1e3)
+              }
+            }
+            continue
+          } catch (u) {
+            A(`⚠️ UI download fallback failed for tile ${e+1}:`, u)
+          }
+        }
         if (!r) {
           A(`⚠️ Resource ${e+1} has no src, skipping...`);
           continue
@@ -5013,16 +5164,18 @@
           }));
           if (!a.success) throw new Error(a.error ||
             "Failed to initiate download");
-          S(`✅ Resource ${t.promptIndex}${o} downloaded to ${i}/${n}`),
-            await p(500)
+          S(`✅ Resource ${t.promptIndex}${o} downloaded to ${i}/${n}`), R++, await p(500)
         } catch (s) {
           D(`❌ Error downloading resource ${t.promptIndex}${o}:`, s)
         }
       }
-      return S("✅ All resources downloaded successfully"), {
+      return R > 0 ? {
         success: !0,
         ...await d()
-      }
+      } : (A(`⚠️ No resources downloaded for prompt ${t.promptIndex}`), {
+        success: !1,
+        error: "Download failed"
+      })
     } catch (a) {
       return D("Error in downloadFromTileIds:", a), {
         success: !1
@@ -5040,31 +5193,34 @@
     return !0
   }
 
-  function pe(e, t) {
-    if (t.some(t => t.id === e.id)) return;
+  function veoAdvanceDownloadCursor(e, t) {
     e.pendingDownloads = e.pendingDownloads || {};
     e.nextDownloadIndex = e.nextDownloadIndex ?? 0;
     for (; e.nextDownloadIndex < e.totalCount;) {
       const n = e.nextDownloadIndex;
-      if (!Object.prototype.hasOwnProperty.call(e.pendingDownloads, n)) return;
-      const o = e.pendingDownloads[n];
-      if (delete e.pendingDownloads[n], o) return e.downloadItems.push(o), void t.push({
-        id: e.id,
-        items: [o],
-        status: "queued",
-        isCancelling: !!e.isCancelling
-      });
-      e.nextDownloadIndex++
+      if (!Object.prototype.hasOwnProperty.call(e.pendingDownloads, n)) break;
+      if (null !== e.pendingDownloads[n]) break;
+      delete e.pendingDownloads[n], e.nextDownloadIndex++
     }
   }
 
+  function pe(e, t) {
+    veoAdvanceDownloadCursor(e, t)
+  }
+
   function ue(e, t, n, o) {
-    e.pendingDownloads = e.pendingDownloads || {}, e.nextDownloadIndex = e.nextDownloadIndex ?? 0,
-      e.pendingDownloads[t] = n, pe(e, o)
+    if (e.pendingDownloads = e.pendingDownloads || {}, e.nextDownloadIndex = e.nextDownloadIndex ?? 0, n)
+      return e.downloadItems = e.downloadItems || [], e.downloadItems.push(n), o.push({
+        id: e.id,
+        items: [n],
+        status: "queued",
+        isCancelling: !!e.isCancelling
+      }), void S(`📥 Queued download prompt ${n.promptIndex ?? t + 1}`);
+    e.pendingDownloads[t] = null, veoAdvanceDownloadCursor(e, o)
   }
 
   function fe(e, t) {
-    e.nextDownloadIndex = (e.nextDownloadIndex ?? 0) + 1, pe(e, t)
+    e.nextDownloadIndex = (e.nextDownloadIndex ?? 0) + 1, veoAdvanceDownloadCursor(e, t)
   }
 
   function Be(e) {
@@ -5107,12 +5263,10 @@
       try {
         let t = "";
         document.querySelectorAll(
-          '[role="alert"], [role="status"], [data-sonner-toast], [data-radix-toast-viewport] *, [class*="toast" i], [class*="Toast"]'
-          ).forEach(e => {
-          t += " " + (e.textContent || "")
-        }), t.trim() || document.querySelectorAll("[data-tile-id]").forEach(e => {
-          t += " " + (e.textContent || "").slice(0, 400)
-        }), t = t.replace(/\s+/g, " ").trim();
+            '[role="alert"], [data-sonner-toast], [data-state="open"][role="alertdialog"]'
+            ).forEach(e => {
+            t += " " + (e.textContent || "")
+          }), t = t.replace(/\s+/g, " ").trim();
         if (!t) return null;
         const n = [/hết hạn mức/i, /hạn mức.*(?:lượt|tạo)/i, /quota.*(?:exceeded|limit|reached)/i,
           /Không thành công.{0,160}(?:mô hình khác|model khác|another model)/i,
@@ -5127,12 +5281,14 @@
       return null
     },
     veoAbortJobOnFatal = (e, t, n) => {
-      if (!e || e.isCancelling) return t || null;
-      const r = t || veoDetectFlowFatalError();
+      if (!e || e.isCancelling) return null;
+      const r = null != t ? t : veoDetectFlowFatalError();
       return r ? (e.isCancelling = !0, e.fatalError = r, e.errorMessage = r, e.pendingIndexes = [], e
-        .status = "error", n?.(e), ee.forEach(t => {
-          t.id === e.id && (t.isCancelling = !0)
-        }), D(`🛑 Dừng job: ${r}`), S(`🛑 Dừng toàn bộ queue: ${r}`), r) : null
+        .status = "error", e.finalRetryPassDone = !0, e.pendingDownloads = {}, e.nextDownloadIndex = e
+        .totalCount, n?.(e), (() => {
+          for (let t = ee.length - 1; t >= 0; t--) ee[t].id === e.id && (ee[t].isCancelling = !0, ee
+            .splice(t, 1))
+        })(), D(`🛑 Dừng job: ${r}`), S(`🛑 Dừng toàn bộ queue: ${r}`), r) : null
     };
   async function X(e, t, n, r) {
     Math.random().toString(36).slice(2, 6);
@@ -5164,9 +5320,8 @@
         const o = e.retryCountByIndex[i] || 0;
         e.currentPromptIndex = i, r(e);
         const u = await $(s, () => !!e.isCancelling, t);
-        if (e.currentPromptIndex = void 0, u.fatal || veoAbortJobOnFatal(e, u.error, r)) return;
+        if (e.currentPromptIndex = void 0, u.fatal && veoAbortJobOnFatal(e, u.error, r)) return;
         if (!u.success && !u.cancelled) {
-          if (veoAbortJobOnFatal(e, null, r)) return;
           if (o < 2) {
             e.retryCountByIndex[i] = o + 1, e.pendingIndexes.includes(i) || e.pendingIndexes.unshift(i),
               r(e);
@@ -5249,8 +5404,38 @@
       promptIndex: e.config?.promptIndex ?? a,
       success: !1,
       downloadComplete: !0,
-      error: `Exceeded maxRetries (${o})`
-    }), s.completedPromptIndexes.add(a), r(s))
+      error: `Download failed (max ${o} retries)`
+    }), s.completedPromptIndexes.add(a), fe(s, ee), r(s))
+  }
+  async function veoProcessDownloadJob(e, t) {
+    for (const n of e.items) {
+      if (e.isCancelling) break;
+      const r = Z.find(t => t.id === e.id);
+      for (; r?.isPaused && !e.isCancelling;) await K(500);
+      if (e.isCancelling) break;
+      const o = await U(n.tileIds, n.config, () => e.isCancelling, t);
+      if (o.success) {
+        if (void 0 !== o.extractedFrame || void 0 !== o.nextPromptEditImage || void 0 !== o
+          .tileIds) {
+          const t = Z.find(t => t.id === e.id);
+          if (t) {
+            const e = (n.index ?? n.config?.promptIndex ?? 0) + 1;
+            e < t.payloads.length && (t.payloads[e] = {
+              ...t.payloads[e],
+              outputPreviousPrompt: {
+                extractedFrame: o.extractedFrame,
+                nextPromptEditImage: o.nextPromptEditImage,
+                tileIds: o.tileIds
+              }
+            })
+          }
+        }
+        Q(n, e.id, Z, re)
+      } else o.cancelled ? Y(n, e.id, Z, re, o.error ?? "Download failed") : J(n, e.id, Z, re)
+    }
+    e.status = "completed";
+    const n = Z.find(t => t.id === e.id);
+    n && veoAdvanceDownloadCursor(n, ee)
   }
   const K = e => new Promise(t => setTimeout(t, e)),
     Z = [],
@@ -5330,11 +5515,14 @@
         const n = [],
           c = veoEffectiveConcurrent(e.concurrentPrompts);
         for (let r = 0; r < c; r++) n.push(X(e, t, ee, re).catch(() => {}));
-        await Promise.all(n)
+        await Promise.all(n);
+        if (e.isCancelling) continue
       }
-      for (; ee.some(t => t.id === e.id) || (e.nextDownloadIndex ?? 0) < e.totalCount || Object.keys(e
-          .pendingDownloads || {}).length > 0;) await K(200);
+      for (; !e.isCancelling && (ee.some(t => t.id === e.id) || (e.nextDownloadIndex ?? 0) < e
+          .totalCount || Object.keys(e.pendingDownloads || {}).length > 0);) await K(200);
+      if (e.isCancelling) continue;
       if (0 === e.pendingIndexes.length) {
+        if (e.fatalError) continue;
         if (Be(e)) continue;
         e.recoveryPassActive = !1, e.status = "completed";
         const t = e.results.every(e => e.success),
@@ -5371,16 +5559,54 @@
       groupId: r,
       concurrentPrompts: o,
       promptDelaySecondsMin: i,
-      promptDelaySecondsMax: a
+      promptDelaySecondsMax: a,
+      resumeFrom: c
     } = e;
-    ((e, t, n, r, o, i) => {
-      const a = t || `group-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
-        s = {
-          id: a,
-          payloads: e.map(e => ({
-            ...e,
-            groupId: a
-          })),
+    ((e, t, n, r, o, i, a) => {
+      const s = t || `group-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+      if (Z.find(e => e.id === s)) return i({
+        success: !1,
+        error: "Group is already in queue"
+      }), void 0;
+      const c = e.map(e => ({
+          ...e,
+          groupId: s
+        })),
+        d = a && t ? {
+          id: s,
+          payloads: c,
+          concurrentPrompts: veoEffectiveConcurrent(n || 1),
+          promptDelaySecondsMin: r || 0,
+          promptDelaySecondsMax: o || 0,
+          sendResponse: i,
+          status: "queued",
+          createdAt: Date.now(),
+          processedCount: a.processedCount ?? 0,
+          totalCount: a.totalCount ?? c.length,
+          isCancelling: !1,
+          isPaused: !1,
+          isActive: !1,
+          activeGenerationCount: 0,
+          lastGenerationStartedAt: 0,
+          results: Array.isArray(a.results) ? [...a.results] : [],
+          pendingIndexes: [...a.pendingIndexes ?? []],
+          completedPromptIndexes: new Set((a.results ?? []).map(e => e.index ?? e
+            .promptIndex - 1)),
+          retryCountByIndex: {},
+          downloadRetryCountByIndex: {},
+          downloadItems: [],
+          nextDownloadIndex: a.processedCount ?? 0,
+          pendingDownloads: {},
+          knownTileIdsBeforeSubmit: new Set,
+          claimedTileIds: new Set,
+          finalRetryPassDone: !1,
+          recoveryPassActive: !1,
+          flowSettingsApplied: !1,
+          fatalError: void 0,
+          errorMessage: ""
+        } : {
+          id: s,
+          payloads: c,
           concurrentPrompts: veoEffectiveConcurrent(n || 1),
           promptDelaySecondsMin: r || 0,
           promptDelaySecondsMax: o || 0,
@@ -5388,13 +5614,13 @@
           status: "queued",
           createdAt: Date.now(),
           processedCount: 0,
-          totalCount: e.length,
+          totalCount: c.length,
           isCancelling: !1,
           isPaused: !1,
           activeGenerationCount: 0,
           lastGenerationStartedAt: 0,
           results: [],
-          pendingIndexes: e.map((e, t) => t),
+          pendingIndexes: c.map((e, t) => t),
           completedPromptIndexes: new Set,
           retryCountByIndex: {},
           downloadRetryCountByIndex: {},
@@ -5404,9 +5630,12 @@
           knownTileIdsBeforeSubmit: new Set,
           claimedTileIds: new Set,
           finalRetryPassDone: !1,
-          recoveryPassActive: !1
+          recoveryPassActive: !1,
+          flowSettingsApplied: !1
         };
-      Z.push(s), re(s)
+      a?.promptPreviews && (d.promptPreviews = a.promptPreviews), S(a ?
+        `▶️ Resume group ${s} — retry ${d.pendingIndexes.length} prompt(s)` :
+        `🆕 New group ${s} — ${d.totalCount} prompt(s)`), Z.push(d), re(d)
     })(n.map(e => {
       if (e.imageIds && Array.isArray(e.imageIds)) {
         const t = e.imageIds.map(e => ae[e]).filter(Boolean);
@@ -5416,7 +5645,7 @@
         }
       }
       return e
-    }), r, o, i, a, t), t({
+    }), r, o, i, a, t, c), t({
       success: !0
     })
   }
@@ -5571,66 +5800,48 @@
       }
       const t = Z[0];
       if (t)
-        if ("cancelled" !== t.status) {
+        if ("queued" === t.status || "running" === t.status || "paused" === t.status) {
           te = t.id, "paused" !== t.status && (t.status = "running"), re(t), ne(.5);
           try {
             await oe(t)
           } catch (e) {
-            t.status = "error", t.errorMessage = e instanceof Error ? e.message : "Unknown error", re(t), t.sendResponse({
-              success: !1,
-              error: e instanceof Error ? e.message : "Unknown error"
-            }), ne(1)
+            t.status = "error", t.errorMessage = e instanceof Error ? e.message : "Unknown error", re(t), t
+              .sendResponse({
+                success: !1,
+                error: e instanceof Error ? e.message : "Unknown error",
+                results: t.results || []
+              }), Z.shift(), te = null, ne(1)
           }
           0 === Z.length && await g()
-        } else Z.shift(), re(t), t.sendResponse({
+        } else "cancelled" === t.status ? (Z.shift(), re(t), t.sendResponse({
           success: !1,
           cancelled: !0,
           results: []
-        })
+        })) : (Z.shift(), re(t))
     }
   })(), (async () => {
+    const t = new Set;
     for (;;) {
-      if (0 === ee.length) {
-        await K(1e3);
-        continue
+      for (; t.size < 2 && ee.length > 0;) {
+        const e = ee.shift();
+        if (!e) break;
+        e.status = "running", t.add(e), (async e => {
+          let n = null;
+          for (let t = 0; t < 5 && !n; t++) n = await chrome.runtime.sendMessage({
+            type: "GET_REMOTE_CONFIG"
+          }).then(e => e ?? null).catch(() => null), n || await K(1e3);
+          try {
+            n ? await veoProcessDownloadJob(e, n) : (A(
+              "⚠️ Download skipped — no remote config, re-queuing..."), e.status =
+              "queued", ee.push(e))
+          } catch (r) {
+            D("Download job error:", r), J(e.items[0], e.id, Z, re)
+          } finally {
+            t.delete(e)
+          }
+        })(e)
       }
-      const e = ee[0];
-      if (!e) continue;
-      e.status = "running";
-      const t = await chrome.runtime.sendMessage({
-        type: "GET_REMOTE_CONFIG"
-      }).then(e => e ?? null).catch(() => null);
-      if (t) {
-        for (const n of e.items) {
-          if (e.isCancelling) break;
-          const r = Z.find(t => t.id === e.id);
-          for (; r?.isPaused && !e.isCancelling;) await K(500);
-          if (e.isCancelling) break;
-          const o = await U(n.tileIds, n.config, () => e.isCancelling, t);
-          if (o.success) {
-            if (void 0 !== o.extractedFrame || void 0 !== o.nextPromptEditImage ||
-              void 0 !== o.tileIds) {
-              const t = Z.find(t => t.id === e.id);
-              if (t) {
-                const e = (n.index ?? n.config?.promptIndex ?? 0) + 1;
-                e < t.payloads.length && (t.payloads[e] = {
-                  ...t.payloads[e],
-                  outputPreviousPrompt: {
-                    extractedFrame: o.extractedFrame,
-                    nextPromptEditImage: o.nextPromptEditImage,
-                    tileIds: o.tileIds
-                  }
-                })
-              }
-            }
-            Q(n, e.id, Z, re), await chrome.runtime.sendMessage({
-              type: "CS"
-            }).catch(() => {})
-          } else o.cancelled ? Y(n, e.id, Z, re, o.error ?? "Download failed") : J(n, e.id,
-            Z, re)
-        }
-        e.status = "completed", ee.shift()
-      } else ee.shift()
+      await K(300)
     }
   })();
 })()
