@@ -167,8 +167,6 @@ function relayToPanel(message) {
   safeRuntimeSend(message);
 }
 
-const PANEL_PATH = 'panel/index.html';
-
 let downloadFolder = '';
 let downloadPrefix = '';
 let autoRenameDownloads = true;
@@ -240,15 +238,32 @@ function onDownloadDeterminingFilename(item, suggest) {
   suggest({ filename: sanitizeDownloadPath(`${downloadFolder}${downloadPrefix}${baseName}`) });
 }
 
-async function setupSidePanel() {
-  if (!chrome.sidePanel) return;
+/** Manifest already sets side_panel.default_path — only persist click-to-open behavior. */
+function enableSidePanelOnActionClick() {
+  if (!chrome.sidePanel?.setPanelBehavior) return;
 
-  try {
-    await chrome.sidePanel.setOptions({ path: PANEL_PATH, enabled: true });
-    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-  } catch {
-    // side panel API may be unavailable in some contexts
-  }
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((err) => {
+      console.error('[VEO] setPanelBehavior failed:', err);
+    });
+}
+
+function openSidePanelForTab(tab) {
+  if (!chrome.sidePanel?.open || !tab) return;
+
+  const target =
+    tab.windowId !== undefined
+      ? { windowId: tab.windowId }
+      : tab.id !== undefined
+        ? { tabId: tab.id }
+        : null;
+  if (!target) return;
+
+  // Call open synchronously in the click handler — await loses the user gesture in production.
+  chrome.sidePanel.open(target).catch((err) => {
+    console.error('[VEO] sidePanel.open failed:', err);
+  });
 }
 
 async function reloadFlowTabs() {
@@ -336,24 +351,22 @@ async function enableNetwork(tabId) {
   });
 }
 
-setupSidePanel();
+enableSidePanelOnActionClick();
 notifyFlowPageState();
 
 chrome.runtime.onInstalled.addListener(async (details) => {
-  await setupSidePanel();
+  enableSidePanelOnActionClick();
   if (details.reason === 'install') {
     await reloadFlowTabs();
   }
 });
 
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!chrome.sidePanel || tab.id === undefined) return;
+chrome.runtime.onStartup.addListener(() => {
+  enableSidePanelOnActionClick();
+});
 
-  try {
-    await chrome.sidePanel.open({ tabId: tab.id });
-  } catch {
-    // ignore
-  }
+chrome.action.onClicked.addListener((tab) => {
+  openSidePanelForTab(tab);
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
