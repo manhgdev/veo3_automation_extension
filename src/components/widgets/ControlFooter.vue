@@ -3,6 +3,7 @@ import PromptGroupQueue from '@/components/queue/PromptGroupQueue.vue';
 
 const props = defineProps({
   promptGroups: { type: Array, default: () => [] },
+  livePrompts: { type: Array, default: () => [] },
   selectedMode: { type: String, default: 'textToImage' },
   isClearingCache: Boolean,
   isSending: Boolean,
@@ -23,7 +24,11 @@ const props = defineProps({
   >
     <slot name="before-queue" />
 
-    <PromptGroupQueue :prompt-groups="promptGroups" :selected-mode="selectedMode" />
+    <PromptGroupQueue
+      :prompt-groups="promptGroups"
+      :live-prompts="livePrompts"
+      :selected-mode="selectedMode"
+    />
 
     <div class="grid grid-cols-2 gap-2 items-stretch">
       <div class="grid grid-cols-3 gap-2">

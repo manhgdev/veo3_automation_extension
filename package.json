@@ -1,6 +1,6 @@
 {
   "name": "veo3",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "description": "VEO Automation Chrome Extension",

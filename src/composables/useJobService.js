@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue';
+import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { dispatchToFlowTab, isFlowTabActive } from '@/chrome/messaging.js';
 import { buildResumeOptions } from '@/utils/jobResume.js';
@@ -56,6 +56,40 @@ async function readStoredSettings() {
   }
 }
 
+async function preparePayloadImages(payloads) {
+  const imageCache = {};
+
+  const strippedPayloads = payloads.map((item) => {
+    if (!item.images?.length) return item;
+    const imageIds = [];
+    for (const img of item.images) {
+      const imageId = img.id || `img-${img.name}-${img.base64.length}`;
+      imageCache[imageId] = { base64: img.base64, name: img.name };
+      imageIds.push(imageId);
+    }
+    return { ...item, imageIds, images: undefined };
+  });
+
+  for (const imageId of Object.keys(imageCache)) {
+    try {
+      await sendChunked('PREPARE_IMAGE', imageCache[imageId], imageId);
+    } catch {
+      /* optional images */
+    }
+  }
+
+  return strippedPayloads;
+}
+
+function buildDispatchOptions(runOptions) {
+  return {
+    concurrentPrompts: runOptions.concurrentPrompts,
+    promptDelaySecondsMin: runOptions.promptDelaySecondsMin,
+    promptDelaySecondsMax: runOptions.promptDelaySecondsMax,
+    batchIdentity: runOptions.batchIdentity,
+  };
+}
+
 export function useJobService() {
   const { t } = useI18n();
   const isSending = ref(false);
@@ -65,44 +99,42 @@ export function useJobService() {
     isSending.value = true;
     error.value = null;
 
-    const resolvedOptions = buildResumeOptions(options.getGroups?.() ?? [], options, payloads);
-    const { getGroups: _omit, ...runOptions } = resolvedOptions;
-
-    const groupId = runOptions.groupId ?? `group-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const imageCache = {};
-
-    const strippedPayloads = payloads.map((item) => {
-      if (!item.images?.length) return item;
-      const imageIds = [];
-      for (const img of item.images) {
-        const imageId = img.id || `img-${img.name}-${img.base64.length}`;
-        imageCache[imageId] = { base64: img.base64, name: img.name };
-        imageIds.push(imageId);
-      }
-      return { ...item, imageIds, images: undefined };
-    });
-
     try {
+      const resolvedOptions = buildResumeOptions(options.getGroups?.() ?? [], options, payloads);
+      const { getGroups: _omit, skipDuplicate, resumeExisting, ...runOptions } = resolvedOptions;
+
       if (!(await isFlowTabActive())) {
         throw new Error(t('notOnFlowOverlay.description'));
       }
 
-      for (const imageId of Object.keys(imageCache)) {
-        try {
-          await sendChunked('PREPARE_IMAGE', imageCache[imageId], imageId);
-        } catch {
-          /* optional images */
-        }
+      if (skipDuplicate && runOptions.groupId) {
+        return { success: true, groupId: runOptions.groupId, alreadyActive: true };
       }
+
+      if (resumeExisting && runOptions.groupId) {
+        const strippedPayloads = await preparePayloadImages(payloads);
+        const response = await dispatchToFlowTab({
+          type: 'RESUME_PROMPT_GROUP',
+          groupId: runOptions.groupId,
+          payloads: strippedPayloads,
+          ...buildDispatchOptions(runOptions),
+        });
+        if (response?.success === false) {
+          throw new Error(response.error || t('common.errors.sendJobFailed'));
+        }
+        return { ...(response || {}), groupId: response?.groupId ?? runOptions.groupId };
+      }
+
+      const groupId = runOptions.groupId ?? `group-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      const strippedPayloads = await preparePayloadImages(payloads);
 
       const response = await dispatchToFlowTab({
         type: 'AUTO_FILL_FLOW',
         payloads: strippedPayloads,
         groupId,
         resumeFrom: runOptions.resumeFrom,
-        concurrentPrompts: runOptions.concurrentPrompts,
-        promptDelaySecondsMin: runOptions.promptDelaySecondsMin,
-        promptDelaySecondsMax: runOptions.promptDelaySecondsMax,
+        ...buildDispatchOptions(runOptions),
       });
 
       if (response?.success === false) {
@@ -110,7 +142,7 @@ export function useJobService() {
       }
 
       await incrementDailyCount(payloads.length);
-      return { ...(response || {}), groupId };
+      return { ...(response || {}), groupId: response?.groupId ?? groupId };
     } catch (err) {
       const message = err?.message || 'Unknown error';
       if (
@@ -135,8 +167,34 @@ export function useJobService() {
     return dispatchToFlowTab({ type: 'PAUSE_PROMPT_GROUP', groupId });
   }
 
-  function resumeJobGroup(groupId) {
-    return dispatchToFlowTab({ type: 'RESUME_PROMPT_GROUP', groupId });
+  async function resumeJobGroup(groupId, payloads = null, options = {}) {
+    if (payloads?.length) {
+      const strippedPayloads = await preparePayloadImages(payloads);
+      const response = await dispatchToFlowTab({
+        type: 'RESUME_PROMPT_GROUP',
+        groupId,
+        payloads: strippedPayloads,
+        ...buildDispatchOptions(options),
+      });
+      if (response?.success === false) {
+        throw new Error(response.error || t('common.errors.sendJobFailed'));
+      }
+      return response;
+    }
+    const stored = await readStoredSettings();
+    const response = await dispatchToFlowTab({
+      type: 'RESUME_PROMPT_GROUP',
+      groupId,
+      ...buildDispatchOptions({
+        concurrentPrompts: options.concurrentPrompts ?? stored.concurrentPrompts,
+        promptDelaySecondsMin: options.promptDelaySecondsMin ?? stored.promptDelaySecondsMin,
+        promptDelaySecondsMax: options.promptDelaySecondsMax ?? stored.promptDelaySecondsMax,
+      }),
+    });
+    if (response?.success === false) {
+      throw new Error(response.error || t('common.errors.sendJobFailed'));
+    }
+    return response;
   }
 
   async function downloadOnlyGroup(group, selectedMode) {

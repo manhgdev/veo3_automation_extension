@@ -1,5 +1,7 @@
 import { ref } from 'vue';
+import { sortPromptGroups } from '@/utils/groupDisplay.js';
 import { useI18n } from 'vue-i18n';
+import { dispatchToFlowTab } from '@/chrome/messaging.js';
 import { useGenerationProgress } from './useGenerationProgress.js';
 import { useActionLog } from './useActionLog.js';
 import { usePanelToast } from './usePanelToast.js';
@@ -7,6 +9,7 @@ import { usePanelToast } from './usePanelToast.js';
 export function usePromptGroups() {
   const promptGroups = ref([]);
   const isProcessingJob = ref(false);
+  const unusualActivityFirst = ref(null);
   const toast = usePanelToast();
   const { t } = useI18n();
 
@@ -77,8 +80,7 @@ export function usePromptGroups() {
         } else {
           promptGroups.value.push(data);
         }
-        promptGroups.value.sort((a, b) => a.createdAt - b.createdAt);
-        promptGroups.value = [...promptGroups.value];
+        promptGroups.value = sortPromptGroups(promptGroups.value);
 
         if (data.status === 'running' || data.status === 'queued') {
           isProcessingJob.value = true;
@@ -104,6 +106,15 @@ export function usePromptGroups() {
         break;
       }
 
+      case 'UNUSUAL_ACTIVITY_FIRST': {
+        // Forward to MainPanel to show help modal once.
+        unusualActivityFirst.value = {
+          at: Date.now(),
+          ...(message.data ?? {}),
+        };
+        break;
+      }
+
       default:
         break;
     }
@@ -111,8 +122,10 @@ export function usePromptGroups() {
 
   function installMessageListener(flowTabRef) {
     setRemoveGroupHandler((groupId) => {
-      promptGroups.value = promptGroups.value.filter((g) => g.id !== groupId);
+      promptGroups.value = sortPromptGroups(promptGroups.value.filter((g) => g.id !== groupId));
     });
+
+    dispatchToFlowTab({ type: 'SYNC_PROMPT_QUEUE' }).catch(() => {});
 
     if (!chrome?.runtime?.onMessage) return;
 
@@ -133,6 +146,7 @@ export function usePromptGroups() {
   return {
     promptGroups,
     isProcessingJob,
+    unusualActivityFirst,
     handleRuntimeMessage,
     installMessageListener,
     removeGroupFromQueue,

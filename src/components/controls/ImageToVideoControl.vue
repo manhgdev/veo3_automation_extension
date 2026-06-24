@@ -2,9 +2,11 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { parsePrompts } from '@/utils/prompts.js';
+import { batchIdentityForJob } from '@/utils/batchIdentity.js';
 import { usePromptOptions, useConcatDetection } from '@/composables/usePromptOptions.js';
 import { useImagesPerPrompt } from '@/composables/useImagesPerPrompt.js';
 import { useJobService } from '@/composables/useJobService.js';
+import { useControlResumeRegistration } from '@/composables/useControlResumeRegistration.js';
 import { usePlanUpgrade } from '@/composables/usePlanUpgrade.js';
 import { usePanelToast } from '@/composables/usePanelToast.js';
 import ImageUploader from '@/components/widgets/ImageUploader.vue';
@@ -83,46 +85,67 @@ const hasEnoughImages = computed(() => {
   return allPromptsHaveImages.value && hasEnoughUploaded.value;
 });
 
+function buildPayloads() {
+  const concurrent = hasConcat.value ? 1 : props.settings.concurrentPrompts;
+  const outputCount = hasConcat.value ? 1 : props.settings.outputCount;
+  return {
+    payloads: prompts.value.map((prompt, index) => ({
+      prompt,
+      mode: 'imageToVideo',
+      images: (imagesPerPrompt.value[index] || []).map((img) => ({
+        id: img.id,
+        base64: img.base64,
+        name: img.name,
+      })),
+      aspectRatio: props.settings.aspectRatio,
+      outputCount,
+      model: props.settings.model,
+      videoOption: getPromptOption(index, {
+        defaultPromptOption: props.settings.defaultVideoOption,
+        totalPrompts: prompts.value.length,
+      }),
+      promptIndex: index + 1,
+      autoDownloadResourceQuality: props.settings.autoDownloadVideoQuality,
+      concurrentPrompts: concurrent,
+      promptDelaySecondsMin: props.settings.promptDelaySecondsMin,
+      promptDelaySecondsMax: props.settings.promptDelaySecondsMax,
+      isConcat: isConcatPrompt(index),
+      maxRetries: props.settings.maxRetries,
+      autoChangeFileName: props.settings.autoChangeFileName,
+      folderName: props.settings.folderName,
+    })),
+    concurrent,
+  };
+}
+
+function jobRunOptions(concurrent, payloads) {
+  return {
+    concurrentPrompts: concurrent,
+    promptDelaySecondsMin: props.settings.promptDelaySecondsMin,
+    promptDelaySecondsMax: props.settings.promptDelaySecondsMax,
+    getGroups: () => props.promptGroups,
+    batchIdentity: batchIdentityForJob(props.settings, 'imageToVideo', payloads),
+  };
+}
+
+async function resumePausedGroup(groupId) {
+  if (!prompts.value.length) {
+    throw new Error(t('common.errors.sendJobFailed'));
+  }
+  const { payloads, concurrent } = buildPayloads();
+  await sendJob(payloads, { ...jobRunOptions(concurrent, payloads), groupId, resumeExisting: true });
+}
+
+useControlResumeRegistration(resumePausedGroup);
+
 async function runJob() {
   if (!uploadedImages.value.length || !prompts.value.length || !hasEnoughImages.value) return;
 
   isRunning.value = true;
-  const concurrent = hasConcat.value ? 1 : props.settings.concurrentPrompts;
-  const outputCount = hasConcat.value ? 1 : props.settings.outputCount;
-
-  const payloads = prompts.value.map((prompt, index) => ({
-    prompt,
-    mode: 'imageToVideo',
-    images: (imagesPerPrompt.value[index] || []).map((img) => ({
-      id: img.id,
-      base64: img.base64,
-      name: img.name,
-    })),
-    aspectRatio: props.settings.aspectRatio,
-    outputCount,
-    model: props.settings.model,
-    videoOption: getPromptOption(index, {
-      defaultPromptOption: props.settings.defaultVideoOption,
-      totalPrompts: prompts.value.length,
-    }),
-    promptIndex: index + 1,
-    autoDownloadResourceQuality: props.settings.autoDownloadVideoQuality,
-    concurrentPrompts: concurrent,
-    promptDelaySecondsMin: props.settings.promptDelaySecondsMin,
-    promptDelaySecondsMax: props.settings.promptDelaySecondsMax,
-    isConcat: isConcatPrompt(index),
-    maxRetries: props.settings.maxRetries,
-    autoChangeFileName: props.settings.autoChangeFileName,
-    folderName: props.settings.folderName,
-  }));
+  const { payloads, concurrent } = buildPayloads();
 
   try {
-    await sendJob(payloads, {
-      concurrentPrompts: concurrent,
-      promptDelaySecondsMin: props.settings.promptDelaySecondsMin,
-      promptDelaySecondsMax: props.settings.promptDelaySecondsMax,
-      getGroups: () => props.promptGroups,
-    });
+    await sendJob(payloads, jobRunOptions(concurrent, payloads));
   } catch (err) {
     toast.add({
       severity: 'error',
@@ -202,6 +225,7 @@ async function runJob() {
     <VideoControlFooter
       :settings="settings"
       :prompt-groups="promptGroups"
+      :live-prompts="prompts"
       selected-mode="imageToVideo"
       :is-clearing-cache="isClearingCache"
       :is-sending="isSending"

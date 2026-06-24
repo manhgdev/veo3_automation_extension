@@ -1,5 +1,8 @@
 /** Extension config — settings, UI flags, Flow selectors. Chỉnh ở đây rồi reload extension. */
 
+export const CHROME_WEB_STORE_URL =
+  'https://chromewebstore.google.com/detail/veo-automation-for-google/fdlajfhamoclhdfcpafljokhdglmoeik';
+
 // --- UI (panel) ---
 export const UI_CONFIG = {
   enableUnusualActivityTip: true,
@@ -14,6 +17,7 @@ export const UI_CONFIG = {
 // --- User settings (chrome.storage.local) ---
 export const SETTINGS_STORAGE_KEY = 'flow_automation_settings';
 export const SETTINGS_MIGRATION_VERSION = 6;
+export const MAX_CONCURRENT_PROMPTS = 6;
 
 export const DEFAULT_SETTINGS = {
   migrationVersion: SETTINGS_MIGRATION_VERSION,
@@ -39,7 +43,7 @@ export const DEFAULT_SETTINGS = {
   defaultCharacters: [],
   autoChangeFileName: true,
   imageModel: '🍌 Nano Banana 2',
-  folderName: 'veo-folder-1',
+  folderName: 'veo-folder-01',
   showUnusualActivityTip: false,
 };
 
@@ -54,7 +58,7 @@ const SETTINGS_MIGRATIONS = {
   4: (s) => { if (s.model === 'Veo 3.1 - Fast [Lower Priority]') s.model = 'Veo 3.1 - Fast'; },
   5: (s) => { if (s.defaultImageOption === 'concat') s.defaultImageOption = 'new-image-concat'; },
   6: (s) => {
-    if ((s.concurrentPrompts ?? 1) > 3) s.concurrentPrompts = 3;
+    if ((s.concurrentPrompts ?? 1) > MAX_CONCURRENT_PROMPTS) s.concurrentPrompts = MAX_CONCURRENT_PROMPTS;
     if ((s.promptDelaySecondsMin ?? 0) < 15) s.promptDelaySecondsMin = 20;
     if ((s.promptDelaySecondsMax ?? 0) < 20) s.promptDelaySecondsMax = 30;
   },

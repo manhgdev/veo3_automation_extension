@@ -19,12 +19,13 @@ import ControlTab from '@/components/tabs/ControlTab.vue';
 import SettingsTab from '@/components/tabs/SettingsTab.vue';
 import DebugLogsTab from '@/components/tabs/DebugLogsTab.vue';
 
-const { settings, selectedMode, isSaving, save, reset, openDownloadSettings } = useSettings();
+const { settings, selectedMode, isSaving, save, reset, openDownloadSettings, load } = useSettings();
 const { isFlowPageActive, navigateToFlowTab, startPolling, stopPolling } = useFlowTab();
 const {
   promptGroups,
   installMessageListener,
   clearProgress,
+  unusualActivityFirst,
 } = usePromptGroups();
 const { isClearing, clearFlowCache } = useClearCache();
 const { version } = useExtensionVersion();
@@ -34,7 +35,7 @@ const activeTab = ref('control');
 const hasConcat = ref(false);
 const showUpdateModal = ref(false);
 const isAutoUpdating = ref(false);
-const showTipModal = ref(false);
+const unusualTipVisible = ref(false);
 
 const textToVideoForm = reactive({ prompt: '' });
 const imageToVideoForm = reactive({ prompt: '', images: [] });
@@ -54,9 +55,10 @@ async function checkForUpdate() {
 onMounted(async () => {
   startPolling();
   removeListener = installMessageListener(isFlowPageActive);
+  await load();
   await checkForUpdate();
-  if (UI_CONFIG.enableUnusualActivityTip && settings.showUnusualActivityTip) {
-    showTipModal.value = true;
+  if (UI_CONFIG.enableUnusualActivityTip) {
+    unusualTipVisible.value = true;
   }
 });
 
@@ -68,7 +70,18 @@ onUnmounted(() => {
 watch(
   () => settings.showUnusualActivityTip,
   (value) => {
-    if (UI_CONFIG.enableUnusualActivityTip) showTipModal.value = !!value;
+    if (UI_CONFIG.enableUnusualActivityTip && value) {
+      unusualTipVisible.value = true;
+    }
+  },
+);
+
+watch(
+  () => unusualActivityFirst.value,
+  (evt) => {
+    if (evt && UI_CONFIG.enableUnusualActivityTip) {
+      unusualTipVisible.value = true;
+    }
   },
 );
 
@@ -104,8 +117,7 @@ function clearCurrentMode() {
     <LoginModal v-if="UI_CONFIG.showPlanBanner && UI_CONFIG.isPricingEnabled" v-model:visible="loginModalOpen" />
     <TipBeforeUseModal
       v-if="UI_CONFIG.enableUnusualActivityTip"
-      :visible="showTipModal && settings.showUnusualActivityTip"
-      @dismiss="showTipModal = false"
+      v-model:visible="unusualTipVisible"
     />
 
     <NotOnFlowOverlay v-if="!isFlowPageActive" @navigate="navigateToFlowTab" />

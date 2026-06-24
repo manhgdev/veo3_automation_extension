@@ -73,19 +73,16 @@ export function findActivePromptGroup(groups) {
 
   const terminal = new Set(['completed', 'cancelled', 'error']);
 
-  for (let i = groups.length - 1; i >= 0; i--) {
-    const group = groups[i];
+  for (const group of groups) {
+    if (group.isActive && !terminal.has(group.status)) return group;
+  }
+
+  for (const group of groups) {
     if (group.status === 'running' || group.status === 'paused') return group;
   }
 
-  for (let i = groups.length - 1; i >= 0; i--) {
-    const group = groups[i];
+  for (const group of groups) {
     if (group.downloadOnly && group.status === 'running') return group;
-  }
-
-  for (let i = groups.length - 1; i >= 0; i--) {
-    const group = groups[i];
-    if (group.isActive && !terminal.has(group.status)) return group;
   }
 
   return null;

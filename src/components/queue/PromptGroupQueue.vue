@@ -10,6 +10,7 @@ import PromptGroupQueueList from '@/components/queue/PromptGroupQueueList.vue';
 
 const props = defineProps({
   promptGroups: { type: Array, default: () => [] },
+  livePrompts: { type: Array, default: () => [] },
   selectedMode: { type: String, default: 'textToImage' },
 });
 
@@ -53,8 +54,8 @@ watch(
   () => props.promptGroups.length,
   (next, prev) => {
     if (next > (prev ?? 0)) {
-      const last = props.promptGroups[props.promptGroups.length - 1];
-      if (last) expandedGroupId.value = last.id;
+      const target = findActivePromptGroup(props.promptGroups) ?? props.promptGroups[0];
+      if (target) expandedGroupId.value = target.id;
     }
   },
 );
@@ -152,6 +153,7 @@ watch(fullscreenOpen, (open) => {
     <PromptGroupQueueList
       ref="queueListRef"
       :prompt-groups="promptGroups"
+      :live-prompts="livePrompts"
       :selected-mode="selectedMode"
       v-model:expanded-group-id="expandedGroupId"
     />
@@ -173,6 +175,7 @@ watch(fullscreenOpen, (open) => {
         <PromptGroupQueueList
           ref="fullscreenQueueListRef"
           :prompt-groups="promptGroups"
+          :live-prompts="livePrompts"
           :selected-mode="selectedMode"
           v-model:expanded-group-id="expandedGroupId"
           fullscreen

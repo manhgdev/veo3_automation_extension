@@ -5,6 +5,7 @@ import ControlFooter from '@/components/widgets/ControlFooter.vue';
 const props = defineProps({
   settings: { type: Object, required: true },
   promptGroups: { type: Array, default: () => [] },
+  livePrompts: { type: Array, default: () => [] },
   selectedMode: { type: String, default: 'textToVideo' },
   isClearingCache: Boolean,
   isSending: Boolean,
@@ -31,6 +32,7 @@ const showCharacterBanner = computed(() => {
 <template>
   <ControlFooter
     :prompt-groups="promptGroups"
+    :live-prompts="livePrompts"
     :selected-mode="selectedMode"
     :is-clearing-cache="isClearingCache"
     :is-sending="isSending"

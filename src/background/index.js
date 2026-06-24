@@ -174,11 +174,26 @@ const PANEL_RELAY_TYPES = new Set([
   'VIDEO_GENERATION_PROGRESS',
   'CONTENT_SCRIPT_RESET',
   'MODEL_QUOTA_SWITCH',
+  'UNUSUAL_ACTIVITY_FIRST',
 ]);
 
 function relayToPanel(message) {
   if (!PANEL_RELAY_TYPES.has(message.type)) return;
   safeRuntimeSend(message);
+}
+
+function persistUnusualTipPending(message) {
+  if (message?.type !== 'UNUSUAL_ACTIVITY_FIRST') return;
+  chrome.storage.local
+    .get('unusualTipShown')
+    .then((data) => {
+      if (data.unusualTipShown) return;
+      return chrome.storage.local.set({
+        unusualTipPending: true,
+        unusualTipPayload: message.data ?? null,
+      });
+    })
+    .catch(() => {});
 }
 
 let downloadFolder = '';
@@ -387,6 +402,7 @@ chrome.action.onClicked.addListener((tab) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.tab && PANEL_RELAY_TYPES.has(message.type)) {
+    persistUnusualTipPending(message);
     relayToPanel(message);
   }
 

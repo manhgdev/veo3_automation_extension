@@ -1,10 +1,10 @@
 <script setup>
+import { CHROME_WEB_STORE_URL } from '@shared/config.js';
+
 defineProps({
   visible: Boolean,
   isAutoUpdating: Boolean,
 });
-
-const storeUrl = 'https://chromewebstore.google.com/';
 </script>
 
 <template>
@@ -33,7 +33,7 @@ const storeUrl = 'https://chromewebstore.google.com/';
       <p class="text-xs text-muted-foreground">{{ $t('updateModal.autoUpdatingHint') }}</p>
       <div class="space-y-2">
         <p class="text-xs text-muted-foreground">{{ $t('updateModal.takingTooLong') }}</p>
-        <a :href="storeUrl" target="_blank" rel="noopener noreferrer" class="block">
+        <a :href="CHROME_WEB_STORE_URL" target="_blank" rel="noopener noreferrer" class="block">
           <PButton
             :label="$t('updateModal.reinstallButton')"
             icon="pi pi-external-link"
@@ -47,7 +47,7 @@ const storeUrl = 'https://chromewebstore.google.com/';
 
     <div v-else class="space-y-4 text-sm">
       <p class="text-muted-foreground">{{ $t('updateModal.manualDescription') }}</p>
-      <a :href="storeUrl" target="_blank" rel="noopener noreferrer" class="block">
+      <a :href="CHROME_WEB_STORE_URL" target="_blank" rel="noopener noreferrer" class="block">
         <PButton
           :label="$t('updateModal.reinstallButton')"
           icon="pi pi-external-link"

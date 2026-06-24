@@ -120,3 +120,87 @@ textarea.veo-prompt-textarea,
   padding-right: 0.25rem;
   box-sizing: border-box;
 }
+
+/* NotOnFlow overlay — global (tránh block flex kéo full width thành thanh ngang) */
+.veo-not-on-flow-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgb(255 255 255 / 0.78);
+  backdrop-filter: blur(8px);
+}
+
+html.dark .veo-not-on-flow-backdrop {
+  background: rgb(0 0 0 / 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.veo-not-on-flow-card {
+  pointer-events: auto;
+  width: 100%;
+  max-width: 24rem;
+  padding: 2rem;
+  text-align: center;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(226 232 240 / 0.95);
+  background: #fff;
+  box-shadow:
+    0 10px 15px -3px rgb(0 0 0 / 0.1),
+    0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+html.dark .veo-not-on-flow-card {
+  border-color: rgb(100 116 139);
+  background: rgb(30 41 59);
+  box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.55);
+}
+
+.veo-not-on-flow-icon {
+  box-sizing: border-box;
+  width: 3.5rem;
+  height: 3.5rem;
+  min-width: 3.5rem;
+  max-width: 3.5rem;
+  flex: 0 0 auto;
+  margin: 0 auto 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid #f87171;
+  background: #fef2f2;
+  color: #ef4444;
+  font-size: 1.875rem;
+  line-height: 1;
+}
+
+html.dark .veo-not-on-flow-icon {
+  border: 3px solid #ef4444;
+  background: rgb(239 68 68 / 0.15);
+  color: #f87171;
+}
+
+.veo-not-on-flow-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: rgb(30 41 59);
+}
+
+html.dark .veo-not-on-flow-title {
+  color: rgb(241 245 249);
+}
+
+.veo-not-on-flow-desc {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.625;
+  color: rgb(71 85 105);
+}
+
+html.dark .veo-not-on-flow-desc {
+  color: rgb(203 213 225);
+}

@@ -3,9 +3,14 @@
  * Flow automation — source: src/content/automation/
  */
 import jQuery from 'jquery';
-import { getRemoteConfig, FALLBACK_FLOW_CONFIG } from '@shared/config.js';
+import { getRemoteConfig, FALLBACK_FLOW_CONFIG, MAX_CONCURRENT_PROMPTS } from '@shared/config.js';
 import { collectOrderedTileIds, assignTilesToPayloads } from './download-only.js';
 import { stripDownloadPayload } from '@/utils/downloadOnly.js';
+import {
+  formatPromptPreview,
+  extractPromptBodyFromTimedPrompt,
+} from '@/utils/prompts.js';
+import { batchIdentityMatches } from '@/utils/batchIdentity.js';
 import {
   isModelQuotaMessage as veoIsModelQuotaMessage,
   extractModelFromQuotaMessage,
@@ -372,15 +377,16 @@ const l = __awaiter;
               var n
             }, veoFormatTagForFilename = (tag) => {
               const trimmed = (tag || "").trim();
+              const normalizeTime = (part) => (part || "").replace(/:/g, ".");
               const rangePattern =
-                /^(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)\s*([–—-])\s*(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)$/;
-              const singleTimePattern = /^\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?$/;
+                /^(\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\.\d+)?)\s*([–—-])\s*(\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\.\d+)?)$/;
+              const singleTimePattern = /^\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\.\d+)?$/;
               const rangeMatch = trimmed.match(rangePattern);
               if (rangeMatch) {
-                return `[${rangeMatch[1].replace(/:/g, ".")}${rangeMatch[2]}${rangeMatch[3].replace(/:/g, ".")}]`;
+                return `[${normalizeTime(rangeMatch[1])}${rangeMatch[2]}${normalizeTime(rangeMatch[3])}]`;
               }
               if (singleTimePattern.test(trimmed)) {
-                return `[${trimmed.replace(/:/g, ".")}]`;
+                return `[${normalizeTime(trimmed)}]`;
               }
               return `[${trimmed}]`;
             }, veoSanitizeDownloadStem = (stem) => (stem || "").replace(/:/g, ".").replace(
@@ -406,15 +412,130 @@ const l = __awaiter;
               const text = (prompt || "").trim().replace(/^\ufeff/, "");
               if (!veoExtractExplicitOutputFilename(text)) return text;
               return text.split(/\r?\n/).slice(1).join("\n").trim()
-            }, veoExtractPromptTag = (prompt) => {
+            }, veoStripLeadingTimelineFromBody = (body) => {
+              let text = (body || "").trim();
+              const tagPrefix = text.match(/^\[([^\]]+)\]\s*/);
+              if (tagPrefix) text = text.slice(tagPrefix[0].length).trim();
+              return text;
+            }, veoPromptSnippetBoilerplateRes = [
+              /^Hand-drawn\s+2D\s+doodle\s+cartoon\s+animation,?\s*/i,
+              /^flat\s+solid\s+colors,?\s*/i,
+              /^bold\s+black\s+(?:hand-drawn\s+)?outlines?,?\s*/i,
+              /^slightly\s+wobbly\s+imperfect\s+marker\s+lines,?\s*/i
+            ], veoStripPromptBoilerplateForSnippet = (body) => {
+              let text = (body || "").trim();
+              if (!text) return text;
+              let prev;
+              do {
+                prev = text;
+                for (const re of veoPromptSnippetBoilerplateRes) text = text.replace(re, "");
+                text = text.trim();
+              } while (text !== prev);
+              return text;
+            }, veoLooksLikePromptSlug = (token, hasExt) => {
+              const slug = (token || "").trim();
+              if (!slug) return !1;
+              if (hasExt) return !0;
+              return slug.includes("_") && !/^Hand-drawn/i.test(slug);
+            }, veoSplitSlugFromRest = (rest) => {
+              let text = veoNormalizePromptBodyAfterPrefix(rest);
+              if (!text) return {
+                slugPart: null,
+                slugExt: null,
+                body: ""
+              };
+              const lines = text.split(/\r?\n/);
+              const firstLine = lines[0]?.trim() ?? "";
+              const slugLineRe =
+                /^([a-zA-Z0-9_-]+)(?:\.(jpg|jpeg|png|mp4|webp|gif|jfif))?$/i;
+              const slugLineMatch = firstLine.match(slugLineRe);
+              if (slugLineMatch && veoLooksLikePromptSlug(slugLineMatch[1], !!slugLineMatch[2]) &&
+                lines.length > 1) {
+                return {
+                  slugPart: slugLineMatch[1],
+                  slugExt: slugLineMatch[2]?.toLowerCase() ?? null,
+                  body: veoStripLeadingTimelineFromBody(lines.slice(1).join("\n"))
+                };
+              }
+              if (slugLineMatch && veoLooksLikePromptSlug(slugLineMatch[1], !!slugLineMatch[2]) &&
+                lines.length === 1) {
+                return {
+                  slugPart: slugLineMatch[1],
+                  slugExt: slugLineMatch[2]?.toLowerCase() ?? null,
+                  body: ""
+                };
+              }
+              const inlineMatch = firstLine.match(
+                /^([a-zA-Z0-9_-]+)(?:\.(jpg|jpeg|png|mp4|webp|gif|jfif))?\s+([\s\S]*)$/i);
+              if (inlineMatch && veoLooksLikePromptSlug(inlineMatch[1], !!inlineMatch[2])) {
+                const tail = inlineMatch[3] + (lines.length > 1 ? "\n" + lines.slice(1).join("\n") : "");
+                return {
+                  slugPart: inlineMatch[1],
+                  slugExt: inlineMatch[2]?.toLowerCase() ?? null,
+                  body: veoStripLeadingTimelineFromBody(tail)
+                };
+              }
+              return {
+                slugPart: null,
+                slugExt: null,
+                body: text
+              };
+            }, veoParseIndexedTagRest = (rest) => {
+              const directSlugMatch = (rest || "").match(
+                /^_+([a-zA-Z0-9_-]+)(?:\.(jpg|jpeg|png|mp4|webp|gif|jfif))?(?:\r?\n\s*([\s\S]*)|\s+([\s\S]+)|([\s\S]*))$/i
+              );
+              if (directSlugMatch && veoLooksLikePromptSlug(directSlugMatch[1], !!directSlugMatch[2])) {
+                const bodyAfter = directSlugMatch[3] ?? directSlugMatch[4] ?? directSlugMatch[5] ?? "";
+                return {
+                  slugPart: directSlugMatch[1],
+                  slugExt: directSlugMatch[2]?.toLowerCase() ?? null,
+                  body: veoStripLeadingTimelineFromBody(veoNormalizePromptBodyAfterPrefix(bodyAfter))
+                };
+              }
+              return veoSplitSlugFromRest(rest);
+            }, veoNormalizePromptBodyAfterPrefix = (body) => {
+              let text = (body || "").replace(/^_+\s*/, "").trim();
+              text = text.replace(/^\s*\|\s*/, "").trim();
+              return text
+            }, veoParsePromptFilenamePrefix = (prompt) => {
               const text = veoStripExplicitOutputFilenameLine(prompt);
-              const tagMatch = text.match(/^\[([^\]]+)\]\s*/);
-              return tagMatch ? veoFormatTagForFilename(tagMatch[1]) : "";
+              const indexedTagMatch = text.match(/^(\d{3})_\[([^\]]+)\]\s*([\s\S]*)$/);
+              if (indexedTagMatch) {
+                const split = veoParseIndexedTagRest(indexedTagMatch[3]);
+                return {
+                  indexPart: indexedTagMatch[1],
+                  tagRaw: indexedTagMatch[2],
+                  slugPart: split.slugPart,
+                  slugExt: split.slugExt,
+                  body: split.body
+                };
+              }
+              const tagMatch = text.match(/^\[([^\]]+)\]\s*([\s\S]*)$/);
+              if (tagMatch) {
+                return {
+                  indexPart: null,
+                  tagRaw: tagMatch[1],
+                  slugPart: null,
+                  slugExt: null,
+                  body: veoStripLeadingTimelineFromBody(veoNormalizePromptBodyAfterPrefix(tagMatch[2]))
+                };
+              }
+              return {
+                indexPart: null,
+                tagRaw: null,
+                slugPart: null,
+                slugExt: null,
+                body: text
+              };
+            }, veoExtractPromptTag = (prompt) => {
+              const { tagRaw } = veoParsePromptFilenamePrefix(prompt);
+              return tagRaw ? veoFormatTagForFilename(tagRaw) : "";
             }, veoExtractPromptSnippet = (prompt, maxLen = 50) => {
-              let text = veoStripExplicitOutputFilenameLine(prompt);
-              text = text.replace(/^\[[^\]]+\]\s*/, "").trim();
-              if (!text) return "prompt";
-              return text.slice(0, maxLen);
+              const { slugPart, body } = veoParsePromptFilenamePrefix(prompt);
+              if (slugPart) return slugPart;
+              const stripped = veoStripPromptBoilerplateForSnippet(body);
+              if (!stripped) return "prompt";
+              return stripped.slice(0, maxLen);
             }, veoSanitizeFileNamePart = (part) => {
               let safe = (part || "name").trim();
               if (!safe) return "name";
@@ -425,11 +546,12 @@ const l = __awaiter;
             }, veoBuildOutputFileStem = (promptIndex, prompt) => {
               const explicit = veoExtractExplicitOutputFilename(prompt);
               if (explicit) return explicit.stem;
-              const indexPart = String(promptIndex).padStart(3, "0");
+              const { indexPart } = veoParsePromptFilenamePrefix(prompt);
+              const indexPartFinal = indexPart || String(promptIndex).padStart(3, "0");
               const tagPart = veoExtractPromptTag(prompt);
               const snippetPart = veoSanitizeFileNamePart(veoExtractPromptSnippet(prompt));
-              const joined = tagPart ? `${indexPart}_${tagPart}_${snippetPart}` :
-                `${indexPart}_${snippetPart}`;
+              const joined = tagPart ? `${indexPartFinal}_${tagPart}_${snippetPart}` :
+                `${indexPartFinal}_${snippetPart}`;
               return veoSanitizeDownloadStem(joined);
             }, veoBuildOutputFileStemWithVariant = (promptIndex, prompt, variantIndex, variantCount) => {
               const explicit = veoExtractExplicitOutputFilename(prompt);
@@ -440,6 +562,8 @@ const l = __awaiter;
             }, veoGetOutputFileExtension = (prompt, isVideo) => {
               const explicit = veoExtractExplicitOutputFilename(prompt);
               if (explicit) return explicit.ext.replace(/^\./, "");
+              const { slugExt } = veoParsePromptFilenamePrefix(prompt);
+              if (slugExt) return slugExt.replace(/^\./, "");
               return isVideo ? "mp4" : "png";
             }, veoApplyDownloadNaming = async (folderName, prefix, autoChangeFileName) => {
               await chrome.runtime.sendMessage({
@@ -977,11 +1101,18 @@ const l = __awaiter;
       await h("@", "Digit2", 50), await p(300), await w(n.selectUploadCharacterType,
           "Click select upload character option"), await f(e), await p(1e3), await h("Enter", "Enter", 13),
         await p(500)
-    }, veoTimelinePrefixRe = /^\[[^\]]+\]\s*/,
-    veoStripTimelinePrefix = e => {
-      const t = veoStripExplicitOutputFilenameLine(e || "").trim().replace(/^﻿/, "").replace(
-        veoTimelinePrefixRe, "").trim();
-      return t || veoStripExplicitOutputFilenameLine(e || "").trim().replace(/^﻿/, "")
+    }, veoStripTimelinePrefix = e => {
+      let t = veoStripExplicitOutputFilenameLine(e || "").trim().replace(/^\ufeff/, "");
+      if (/^\d{3}_\[[^\]]+\]/.test(t)) return extractPromptBodyFromTimedPrompt(t);
+      const indexedPrefix = t.match(/^(\d{3})_\[([^\]]+)\]\s*([\s\S]*)$/);
+      if (indexedPrefix) {
+        const split = veoParseIndexedTagRest(indexedPrefix[3]);
+        t = split.body;
+      } else {
+        const tagPrefix = t.match(/^\[([^\]]+)\]\s*([\s\S]*)$/);
+        if (tagPrefix) t = veoStripLeadingTimelineFromBody(veoNormalizePromptBodyAfterPrefix(tagPrefix[2]));
+      }
+      return t || veoStripExplicitOutputFilenameLine(e || "").trim().replace(/^\ufeff/, "")
     }, F = async (e, t) => {
       try {
         const n = t.selectors,
@@ -1709,6 +1840,87 @@ const l = __awaiter;
       .nextDownloadIndex ?? 0, t[0]), re(e), !0
   }
 
+  function veoGetSuccessfulIndexes(e) {
+    const t = new Set;
+    for (const n of e.results ?? []) n.success && t.add(n.index ?? n.promptIndex - 1);
+    return t
+  }
+
+  function veoStableSettingsKey(e) {
+    return JSON.stringify(veoStableFlowSettings(e))
+  }
+
+  function veoGetActiveBatchGroup(excludeId) {
+    return Z.find(g => !g.downloadOnly && (g.isPaused || "queued" === g.status || "running" === g.status || "paused" === g.status) && g.id !== excludeId)
+  }
+
+  function veoApplyResumeDispatchOptions(e, t) {
+    null != t?.concurrentPrompts && (e.concurrentPrompts = veoEffectiveConcurrent(t.concurrentPrompts));
+    void 0 !== t?.promptDelaySecondsMin && (e.promptDelaySecondsMin = t.promptDelaySecondsMin);
+    void 0 !== t?.promptDelaySecondsMax && (e.promptDelaySecondsMax = t.promptDelaySecondsMax);
+  }
+
+  function veoEnsurePromptWorkers(e, t, n, r) {
+    if (e.isCancelling || e.isPaused) return;
+    e._promptWorkersAlive = e._promptWorkersAlive ?? 0;
+    const o = veoEffectiveConcurrent(e.concurrentPrompts);
+    for (; e._promptWorkersAlive < o;) {
+      e._promptWorkersAlive++;
+      X(e, t, n, r).catch(() => {}).finally(() => {
+        e._promptWorkersAlive = Math.max(0, (e._promptWorkersAlive ?? 1) - 1);
+      });
+    }
+  }
+
+  function veoMergeResumePayloads(e, t, n) {
+    if (!t?.length) return;
+    const r = e.payloads ?? [],
+      o = veoGetSuccessfulIndexes(e);
+    let i = "number" == typeof e.currentPromptIndex ? e.currentPromptIndex : null;
+    null !== i && o.has(i) && (i = null);
+    const a = t.map((t, n) => ({
+      ...t,
+      groupId: e.id,
+      promptIndex: n + 1
+    }));
+    for (let t = 0; t < a.length; t++)
+      if (o.has(t) && r[t]) a[t] = {
+        ...r[t],
+        folderName: a[t].folderName,
+        autoChangeFileName: a[t].autoChangeFileName,
+        autoDownloadResourceQuality: a[t].autoDownloadResourceQuality,
+        groupId: e.id,
+        promptIndex: t + 1
+      };
+    e.payloads = a, e.totalCount = a.length, e.promptPreviews = a.map(e => formatPromptPreview(e.prompt));
+    veoApplyResumeDispatchOptions(e, n);
+    let s = !1;
+    for (let t = 0; t < a.length; t++)
+      if (!o.has(t)) {
+        const n = r[t],
+          i = a[t];
+        if (!n || n.prompt !== i.prompt || veoStableSettingsKey(n) !== veoStableSettingsKey(i)) {
+          s = !0;
+          break
+        }
+      }
+    s && (e.flowSettingsApplied = !1);
+    const c = (e.results ?? []).filter(t => {
+      const n = t.index ?? t.promptIndex - 1;
+      return o.has(n) && t.success && n < a.length
+    });
+    if (null !== i && !o.has(i)) {
+      const t = i;
+      e.retryCountByIndex && delete e.retryCountByIndex[t], e.downloadRetryCountByIndex && delete e
+        .downloadRetryCountByIndex[t], e.pendingDownloads && delete e.pendingDownloads[t]
+    }
+    e.results = c, e.completedPromptIndexes = new Set(o), e.processedCount = c.length;
+    const u = [];
+    for (let e = 0; e < a.length; e++) o.has(e) || u.push(e);
+    null !== i ? e.pendingIndexes = [i, ...u.filter(e => e !== i)] : e.pendingIndexes = u, e
+      .recoveryPassActive = !1, S(`🔄 Merged resume settings for group ${e.id} — ${u.length} prompt(s) pending`)
+  }
+
   function G(e, t) {
     for (let n = 0; n < e.pendingIndexes.length; n++) {
       const t = e.pendingIndexes[n];
@@ -1717,7 +1929,7 @@ const l = __awaiter;
     return null
   }
   const z = e => new Promise(t => setTimeout(t, e)),
-    veoEffectiveConcurrent = e => Math.min(3, Math.max(1, Number(e) || 1)),
+    veoEffectiveConcurrent = e => Math.min(MAX_CONCURRENT_PROMPTS, Math.max(1, Number(e) || 1)),
     veoWaitGenerationCooldown = async (e, t) => {
         const n = e.promptDelaySecondsMin ?? 0,
           r = e.promptDelaySecondsMax ?? n;
@@ -1930,6 +2142,55 @@ const l = __awaiter;
         D(`⏸️ Tạm dừng group (hết hạn mức): ${pauseMessage}`);
         return "paused";
       },
+      veoHandleUnusualActivity = (jobGroup, message, onUpdate, opts) => {
+        if (!jobGroup || jobGroup.isCancelling) return null;
+        const unusualMessage = (message || veoDetectFlowFatalError() || veoFlowFallbackMsg("unusual")).trim();
+        const requeueIndex = opts?.requeueIndex;
+
+        const now = Date.now();
+        const lastAt = jobGroup.unusualActivityLastAt || 0;
+        // reset counter if it hasn't happened recently
+        if (now - lastAt > 2 * 60 * 1000) jobGroup.unusualActivityCount = 0;
+        jobGroup.unusualActivityLastAt = now;
+        jobGroup.unusualActivityCount = (jobGroup.unusualActivityCount || 0) + 1;
+
+        if (1 === jobGroup.unusualActivityCount) try {
+          chrome.runtime.sendMessage({
+            type: "UNUSUAL_ACTIVITY_FIRST",
+            data: {
+              groupId: jobGroup.id,
+              message: unusualMessage
+            }
+          }).catch(() => {});
+        } catch {}
+
+        // After many consecutive unusual blocks, pause the group instead of hard-failing.
+        // User requirement: only stop after ~5-10 consecutive occurrences.
+        const MAX_CONSEC_UNUSUAL = 8;
+
+        if (typeof requeueIndex === "number" && !jobGroup.pendingIndexes.includes(requeueIndex)) {
+          jobGroup.pendingIndexes.unshift(requeueIndex);
+        } else if (typeof jobGroup.currentPromptIndex === "number" && !jobGroup.pendingIndexes.includes(jobGroup
+            .currentPromptIndex)) {
+          jobGroup.pendingIndexes.unshift(jobGroup.currentPromptIndex);
+        }
+
+        jobGroup.currentPromptIndex = void 0;
+        jobGroup.errorMessage = unusualMessage;
+        onUpdate?.(jobGroup);
+
+        if (jobGroup.unusualActivityCount >= MAX_CONSEC_UNUSUAL) {
+          jobGroup.isPaused = !0;
+          jobGroup.status = "paused";
+          S(`⏸️ Tạm dừng group ${jobGroup.id} (hoạt động bất thường): ${unusualMessage}`);
+          D(`⏸️ Tạm dừng group (unusual activity): ${unusualMessage}`);
+          return "paused";
+        }
+
+        // soft-block: keep running, retry later
+        S(`🔁 Unusual activity (${jobGroup.unusualActivityCount}/${MAX_CONSEC_UNUSUAL}) — sẽ thử lại prompt...`);
+        return "unusual-retry";
+      },
       veoTrySwitchModelOnQuota = (jobGroup, message, onUpdate, opts) => {
         if (!jobGroup || jobGroup.isCancelling) return null;
         const requeueIndex = opts?.requeueIndex ?? jobGroup.currentPromptIndex;
@@ -1987,6 +2248,10 @@ const l = __awaiter;
           const switched = veoTrySwitchModelOnQuota(jobGroup, blockMessage, onUpdate, opts);
           if (switched) return switched;
         }
+        if (veoIsUnusualActivityMessage(blockMessage)) {
+          const handled = veoHandleUnusualActivity(jobGroup, blockMessage, onUpdate, opts);
+          if (handled) return handled;
+        }
         return veoFlowTextMatchesAny(blockMessage, veoFlowQuotaPatterns) ? veoPauseJobOnQuota(jobGroup,
           blockMessage, onUpdate, opts) : veoAbortJobOnFatal(jobGroup, blockMessage, onUpdate);
       },
@@ -1994,7 +2259,7 @@ const l = __awaiter;
         if (!jobGroup || jobGroup.isCancelling) return null;
         const fatalMessage = message != null ? message : veoDetectFlowFatalError();
         if (!fatalMessage || veoFlowTextMatchesAny(fatalMessage, veoFlowQuotaPatterns) || veoIsModelQuotaMessage(
-            fatalMessage)) return null;
+            fatalMessage) || veoIsUnusualActivityMessage(fatalMessage)) return null;
         jobGroup.isCancelling = !0;
         jobGroup.fatalError = fatalMessage;
         jobGroup.errorMessage = fatalMessage;
@@ -2209,7 +2474,7 @@ const l = __awaiter;
             createdAt: e.createdAt,
             isCancelling: !!e.isCancelling,
             isPaused: !!e.isPaused,
-            isActive: te === e.id && ("running" === e.status || "paused" === e.status),
+            isActive: te === e.id && ("running" === e.status || "paused" === e.status || "queued" === e.status),
             recoveryPassActive: !!e.recoveryPassActive,
             delayRemainingSeconds: e.delayRemainingSeconds,
             results: e.results.map(e => ({
@@ -2221,7 +2486,9 @@ const l = __awaiter;
               error: e.error
             })),
             currentPromptIndex: e.currentPromptIndex,
-            promptPreviews: (e.payloads || []).map(e => (e?.prompt || "").toString().substring(0, 60)),
+            promptPreviews: (e.payloads || []).map(e => formatPromptPreview(e?.prompt)),
+            runMode: e.payloads?.[0]?.mode || void 0,
+            batchIdentity: e.batchIdentity || void 0,
             retryCountByIndex: {
               ...e.retryCountByIndex
             },
@@ -2367,7 +2634,7 @@ const l = __awaiter;
         downloadItems: [],
         nextDownloadIndex: 0,
         pendingDownloads: {},
-        promptPreviews: a.map(e => String(e.prompt || "").substring(0, 60)),
+        promptPreviews: a.map(e => formatPromptPreview(e.prompt)),
         concurrentPrompts: 1,
         promptDelaySecondsMin: 0,
         promptDelaySecondsMax: 0,
@@ -2405,11 +2672,15 @@ const l = __awaiter;
         continue
       }
       if (e.pendingIndexes.length > 0) {
-        const n = [],
-          c = veoEffectiveConcurrent(e.concurrentPrompts);
-        for (let r = 0; r < c; r++) n.push(X(e, t, ee, re).catch(() => {}));
-        await Promise.all(n);
-        if (e.isCancelling) continue
+        for (; !e.isCancelling && (e.pendingIndexes.length > 0 || (e.activeGenerationCount || 0) > 0 || veoHasPendingGeneration(e));) {
+          if (e.isPaused) {
+            await K(500);
+            continue;
+          }
+          veoEnsurePromptWorkers(e, t, ee, re);
+          await K(200);
+        }
+        if (e.isCancelling) continue;
       }
       for (; !e.isCancelling && (ee.some(t => t.id === e.id) || (e.nextDownloadIndex ?? 0) < e.totalCount || Object
           .keys(e.pendingDownloads || {}).length > 0);) await K(200);
@@ -2454,15 +2725,83 @@ const l = __awaiter;
       concurrentPrompts: o,
       promptDelaySecondsMin: i,
       promptDelaySecondsMax: a,
-      resumeFrom: c
+      resumeFrom: c,
+      batchIdentity: u
     } = e;
     let queued = !1;
+    const result = {
+      groupId: r
+    };
     ((e, t, n, r, o, i, a) => {
       const s = t || `group-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
-      if (Z.find(e => e.id === s)) return i({
-        success: !1,
-        error: "Group is already in queue"
-      }), void 0;
+      result.groupId = s;
+      const existing = Z.find(e => e.id === s);
+      if (existing) {
+        if (a) {
+          const c = e.map(e => ({
+            ...e,
+            groupId: s
+          }));
+          existing.payloads = c;
+          existing.concurrentPrompts = veoEffectiveConcurrent(n || existing.concurrentPrompts || 1);
+          existing.promptDelaySecondsMin = r ?? existing.promptDelaySecondsMin ?? 0;
+          existing.promptDelaySecondsMax = o ?? existing.promptDelaySecondsMax ?? 0;
+          existing.processedCount = a.processedCount ?? existing.processedCount ?? 0;
+          existing.totalCount = a.totalCount ?? c.length;
+          existing.results = Array.isArray(a.results) ? [...a.results] : existing.results ?? [];
+          existing.pendingIndexes = [...(a.pendingIndexes ?? [])];
+          existing.completedPromptIndexes = new Set((existing.results ?? []).map(e => e.index ?? e.promptIndex - 1));
+          existing.isPaused = !1;
+          existing.isCancelling = !1;
+          existing.errorMessage = "";
+          existing.fatalError = void 0;
+          existing.status = "queued" === existing.status ? "queued" : "running";
+          a.promptPreviews && (existing.promptPreviews = a.promptPreviews);
+          try {
+            const idx = Z.findIndex(e => e.id === s);
+            if (idx > 0) {
+              Z.splice(idx, 1);
+              Z.unshift(existing);
+            }
+          } catch {}
+          S(`▶️ Resume group ${s} — retry ${existing.pendingIndexes.length} prompt(s)`);
+          re(existing);
+          result.groupId = s;
+          queued = !0;
+          return;
+        }
+        return i({
+          success: !1,
+          error: "Group is already in queue"
+        }), void 0;
+      }
+      const activeBatch = veoGetActiveBatchGroup(s);
+      if (activeBatch && !a && batchIdentityMatches(activeBatch.batchIdentity, u)) {
+        const u = e.map(e => ({
+          ...e,
+          groupId: activeBatch.id
+        }));
+        const l = {
+          concurrentPrompts: n,
+          promptDelaySecondsMin: r,
+          promptDelaySecondsMax: o
+        };
+        veoMergeResumePayloads(activeBatch, u, l);
+        activeBatch.isPaused = !1;
+        activeBatch.isCancelling = !1;
+        activeBatch.errorMessage = "";
+        activeBatch.fatalError = void 0;
+        activeBatch.status = "queued" === activeBatch.status ? "queued" : "running";
+        try {
+          const e = Z.findIndex(e => e.id === activeBatch.id);
+          e > 0 && (Z.splice(e, 1), Z.unshift(activeBatch))
+        } catch {}
+        S(`♻️ Reused active group ${activeBatch.id} (blocked duplicate ${s})`);
+        re(activeBatch);
+        result.groupId = activeBatch.id;
+        queued = !0;
+        return
+      }
       const c = e.map(e => ({
           ...e,
           groupId: s
@@ -2527,7 +2866,7 @@ const l = __awaiter;
           recoveryPassActive: !1,
           flowSettingsApplied: !1
         };
-      a?.promptPreviews && (d.promptPreviews = a.promptPreviews), S(a ?
+      a?.promptPreviews && (d.promptPreviews = a.promptPreviews), u && (d.batchIdentity = u), S(a ?
         `▶️ Resume group ${s} — retry ${d.pendingIndexes.length} prompt(s)` :
         `🆕 New group ${s} — ${d.totalCount} prompt(s)`), Z.push(d), re(d), queued = !0
     })(n.map(e => {
@@ -2540,7 +2879,8 @@ const l = __awaiter;
       }
       return e
     }), r, o, i, a, t, c), queued && t({
-      success: !0
+      success: !0,
+      groupId: result.groupId
     })
   }
   chrome.runtime.onMessage.addListener((e, t, n) => {
@@ -2591,6 +2931,11 @@ const l = __awaiter;
             totalChunks: i
           })
         }(e, n), !0;
+      case "SYNC_PROMPT_QUEUE":
+        return Z.forEach(e => re(e)), n({
+          success: !0,
+          count: Z.length
+        }), !0;
       case "AUTO_FILL_FLOW":
         return ce(e, n), !0;
       case "DOWNLOAD_ONLY_FLOW":
@@ -2640,22 +2985,56 @@ const l = __awaiter;
           }
         })(e.groupId)), !0;
       case "RESUME_PROMPT_GROUP":
-        return n((e => {
-          const t = Z.findIndex(t => t.id === e);
-          if (-1 === t) return {
+        return n((t => {
+          const r = Z.findIndex(e => e.id === t.groupId);
+          if (-1 === r) return {
             success: !1,
             error: "Prompt group not found"
           };
-          const n = Z[t];
-          return n.isPaused && ("paused" === n.status || "running" === n.status) ? (n.isPaused = !1, n
-            .status = "running", re(n), {
-              success: !0,
-              resumed: !0
-            }) : {
+          const n = Z[r];
+          if (!(n.isPaused && ("paused" === n.status || "running" === n.status))) return {
             success: !1,
             error: "Prompt group is not paused"
+          };
+          veoApplyResumeDispatchOptions(n, t);
+          if (t.payloads?.length) {
+            const e = t.payloads.map(e => {
+              if (e.imageIds && Array.isArray(e.imageIds)) {
+                const t = e.imageIds.map(e => ae[e]).filter(Boolean);
+                return {
+                  ...e,
+                  images: t
+                }
+              }
+              return e
+            });
+            veoMergeResumePayloads(n, e, t)
           }
-        })(e.groupId)), !0;
+          try {
+            const e = "number" == typeof n.currentPromptIndex ? n.currentPromptIndex : null;
+            if (null !== e && !n.pendingIndexes.includes(e) && !(n.completedPromptIndexes?.has?.(e))) n
+              .pendingIndexes.unshift(e)
+          } catch {}
+          try {
+            if (0 === (n.pendingIndexes?.length || 0) && (n.processedCount ?? 0) < (n.totalCount ?? 0)) {
+              const e = n.completedPromptIndexes instanceof Set ? n.completedPromptIndexes : new Set,
+                t = [];
+              for (let r = 0; r < (n.totalCount ?? 0); r++) e.has(r) || t.push(r);
+              n.pendingIndexes = t
+            }
+          } catch {}
+          try {
+            if (r > 0) {
+              Z.splice(r, 1);
+              Z.unshift(n)
+            }
+          } catch {}
+          return n.isPaused = !1, n.status = "running", n.currentPromptIndex = void 0, re(n), {
+            success: !0,
+            resumed: !0,
+            groupId: n.id
+          }
+        })(e)), !0;
       case "CHECK_FLOW_PAGE":
         return n({
           isFlowPage: (() => {

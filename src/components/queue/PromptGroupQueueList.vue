@@ -2,12 +2,16 @@
 import { useI18n } from 'vue-i18n';
 import { useGenerationProgress } from '@/composables/useGenerationProgress.js';
 import { useJobService } from '@/composables/useJobService.js';
+import { resumePausedGroupFromUI } from '@/composables/useActiveControlResume.js';
 import { usePanelToast } from '@/composables/usePanelToast.js';
 import { getPromptStatus } from '@/utils/queue.js';
+import { formatPromptPreview } from '@/utils/prompts.js';
 import { canRedownloadGroup } from '@/utils/downloadOnly.js';
+import { formatGroupDisplayName } from '@/utils/groupDisplay.js';
 
 const props = defineProps({
   promptGroups: { type: Array, default: () => [] },
+  livePrompts: { type: Array, default: () => [] },
   expandedGroupId: { type: [String, Number, null], default: null },
   fullscreen: Boolean,
   selectedMode: { type: String, default: 'textToImage' },
@@ -18,7 +22,7 @@ const emit = defineEmits(['update:expandedGroupId']);
 const { t } = useI18n();
 const toast = usePanelToast();
 const { generationProgress, removeGroupFromQueue } = useGenerationProgress();
-const { cancelJobGroup, pauseJobGroup, resumeJobGroup, downloadOnlyGroup } = useJobService();
+const { cancelJobGroup, pauseJobGroup, downloadOnlyGroup } = useJobService();
 
 const groupStatusClass = {
   queued: 'bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600',
@@ -70,6 +74,36 @@ function promptError(group, index) {
 
 function promptCount(group) {
   return Math.max(0, Number(group.totalCount) || 0);
+}
+
+function displayPromptPreview(group, promptIdx) {
+  const index = promptIdx - 1;
+  const live = props.livePrompts?.[index];
+  const useLive =
+    live != null &&
+    String(live).trim() !== '' &&
+    (group.isActive || group.status === 'paused' || group.status === 'running');
+  const raw = useLive ? live : group.promptPreviews?.[index];
+  return formatPromptPreview(raw) || `Prompt ${promptIdx}`;
+}
+
+function displayPromptTitle(group, promptIdx) {
+  const index = promptIdx - 1;
+  const live = props.livePrompts?.[index];
+  const useLive =
+    live != null &&
+    String(live).trim() !== '' &&
+    (group.isActive || group.status === 'paused' || group.status === 'running');
+  if (useLive) return String(live).trim().replace(/\s+/g, ' ');
+  return group.promptPreviews?.[index] ?? `Prompt ${promptIdx}`;
+}
+
+function groupDisplayName(group) {
+  return formatGroupDisplayName(group, t);
+}
+
+async function onResumeGroup(groupId) {
+  await resumePausedGroupFromUI(groupId);
 }
 
 async function runGroupAction(action, groupId) {
@@ -134,7 +168,7 @@ async function onRedownload(group) {
                 class="pi text-xs transition-transform"
                 :class="expandedGroupId === group.id ? 'pi-chevron-down' : 'pi-chevron-right'"
               />
-              <span class="text-xs font-semibold truncate">{{ group.id }}</span>
+              <span class="text-xs font-semibold truncate" :title="group.id">{{ groupDisplayName(group) }}</span>
               <span
                 class="px-2 py-0.5 rounded-full text-xs font-semibold capitalize"
                 :class="groupStatusClass[group.status] || groupStatusClass.queued"
@@ -181,7 +215,7 @@ async function onRedownload(group) {
               severity="warning"
               icon="pi pi-play"
               text
-              @click="runGroupAction(resumeJobGroup, group.id)"
+              @click="runGroupAction(onResumeGroup, group.id)"
             />
             <PButton
               v-if="group.status === 'running' || group.status === 'queued'"
@@ -258,6 +292,12 @@ async function onRedownload(group) {
               :class="promptStatusClass[getPromptStatus(group, promptIdx - 1)] || promptStatusClass.pending"
             >
               <div class="flex items-center gap-2">
+                <span
+                  class="veo-prompt-queue-num shrink-0 w-6 text-right tabular-nums text-muted-foreground"
+                  :title="`#${promptIdx}`"
+                >
+                  {{ promptIdx }}.
+                </span>
                 <i
                   class="pi w-4 shrink-0"
                   :class="{
@@ -274,8 +314,8 @@ async function onRedownload(group) {
                     'pi-times-circle': getPromptStatus(group, promptIdx - 1) === 'error',
                   }"
                 />
-                <span class="flex-1 min-w-0 truncate" :title="group.promptPreviews?.[promptIdx - 1]">
-                  {{ group.promptPreviews?.[promptIdx - 1] || `Prompt ${promptIdx}` }}
+                <span class="flex-1 min-w-0 truncate" :title="displayPromptTitle(group, promptIdx)">
+                  {{ displayPromptPreview(group, promptIdx) }}
                 </span>
                 <span class="shrink-0 font-medium">
                   {{ promptStatusLabel(getPromptStatus(group, promptIdx - 1), group, promptIdx - 1) }}

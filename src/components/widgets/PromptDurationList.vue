@@ -2,6 +2,7 @@
 import { ref, computed, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { usePersistResize } from '@/composables/usePersistResize.js';
+import { formatPromptPreview } from '@/utils/prompts.js';
 import ExpandFullscreenButton from '@/components/widgets/ExpandFullscreenButton.vue';
 import FullscreenViewModal from '@/components/modals/FullscreenViewModal.vue';
 import PromptDurationListRows from '@/components/widgets/PromptDurationListRows.vue';
@@ -92,9 +93,8 @@ function rowBadges(index) {
   return badges;
 }
 
-function truncatePrompt(text, max = 30) {
-  const s = String(text ?? '');
-  return s.length > max ? `${s.slice(0, max)}...` : s;
+function truncatePrompt(text) {
+  return formatPromptPreview(text);
 }
 
 function optionSubtitle(index, prompt) {
