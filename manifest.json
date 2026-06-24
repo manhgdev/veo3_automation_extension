@@ -7,14 +7,18 @@
 
   "description": "Manage prompts, organize batch workflows, and download AI videos and images inside Google Flow.",
 
-  "version": "1.0.1",
+  "version": "1.0.2",
 
-  "version_name": "1.0.1",
+  "version_name": "1.0.2",
 
   "manifest_version": 3,
 
   "action": {
-    "default_title": "VEO Automation"
+    "default_title": "VEO Automation",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
   },
 
   "background": {
