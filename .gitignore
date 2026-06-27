@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.rar
+*.zip
+*.bk
+*.bk[0-9]
+
+# Generated at build (messages.source.js + locale-overlays.js)
+src/i18n/messages.json
