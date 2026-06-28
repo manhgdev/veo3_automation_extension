@@ -99,7 +99,7 @@ export function extractPromptDisplayPrefix(text) {
   const firstLine = String(text ?? '').trim().split(/\r?\n/)[0] ?? '';
   const match = firstLine.match(/^(\d{3})_(\[[^\]]+\])(?:_([^\s|]+))?/i);
   if (!match) return '';
-  const displayIdx = String(parseInt(match[1], 10));
+  const displayIdx = match[1];
   let prefix = `${displayIdx}_${match[2]}`;
   if (match[3]) prefix += `_${match[3]}`;
   return prefix;
