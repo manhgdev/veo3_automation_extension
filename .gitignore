@@ -3,7 +3,10 @@ dist/
 *.rar
 *.zip
 *.bk
-*.bk[0-9]
+*.bk[0-999]
+*.mp4
+*.mp3
+*.srt
 
 # Generated at build (messages.source.js + locale-overlays.js)
 src/i18n/messages.json

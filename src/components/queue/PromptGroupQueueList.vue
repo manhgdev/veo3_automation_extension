@@ -1,10 +1,11 @@
 <script setup>
+import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useGenerationProgress } from '@/composables/useGenerationProgress.js';
 import { useJobService } from '@/composables/useJobService.js';
 import { resumePausedGroupFromUI } from '@/composables/useActiveControlResume.js';
 import { usePanelToast } from '@/composables/usePanelToast.js';
-import { getPromptStatus } from '@/utils/queue.js';
+import { cooldownSecondsLeft, getPromptStatus } from '@/utils/queue.js';
 import { formatPromptPreview, formatPromptDisplayTitle } from '@/utils/prompts.js';
 import { canRedownloadGroup } from '@/utils/downloadOnly.js';
 import { formatGroupDisplayName } from '@/utils/groupDisplay.js';
@@ -24,7 +25,8 @@ const { t } = useI18n();
 const toast = usePanelToast();
 const { generationProgress, removeGroupFromQueue } = useGenerationProgress();
 const { cancelJobGroup, pauseJobGroup, downloadOnlyGroup } = useJobService();
-const { now, secondsLeft, isDelaying } = usePromptDelayTicker();
+const { now, isDelaying } = usePromptDelayTicker();
+const delayClock = computed(() => now.value);
 
 const groupStatusClass = {
   queued: 'bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600',
@@ -54,8 +56,11 @@ function groupStatusLabel(status) {
 }
 
 function promptStatusLabel(status, group, index) {
+  const ts = delayClock.value;
   if (status === 'delaying' || isDelaying(group, index)) {
-    return t('controlTab.promptGroups.delayCountdown', { seconds: secondsLeft(group, index) });
+    return t('controlTab.promptGroups.delayCountdown', {
+      seconds: cooldownSecondsLeft(group, index, ts),
+    });
   }
   if (status === 'retrying') {
     const n = group.downloadRetryCountByIndex?.[index] ?? 0;
@@ -65,7 +70,7 @@ function promptStatusLabel(status, group, index) {
 }
 
 function promptStatus(group, index) {
-  return getPromptStatus(group, index, now.value);
+  return getPromptStatus(group, index, delayClock.value);
 }
 
 function progressEntry(groupId, promptIndex) {
@@ -311,7 +316,12 @@ async function onRedownload(group) {
             {{ $t('controlTab.promptGroups.empty') }}
           </div>
 
-          <div v-else class="veo-prompt-queue-prompts" :data-veo-queue-prompts="group.id">
+          <div
+            v-else
+            class="veo-prompt-queue-prompts"
+            :data-veo-queue-prompts="group.id"
+            :data-veo-delay-clock="delayClock"
+          >
             <div
               v-for="promptIdx in promptCount(group)"
               :key="promptIdx"

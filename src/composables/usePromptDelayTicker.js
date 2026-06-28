@@ -1,21 +1,15 @@
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref } from 'vue';
 import { cooldownSecondsLeft, isPromptInCooldown } from '@/utils/queue.js';
+
+const now = ref(Date.now());
+
+/** Đồng hồ dùng chung — không phụ thuộc onMounted từng instance list. */
+setInterval(() => {
+  now.value = Date.now();
+}, 100);
 
 /** Cập nhật đồng hồ chờ mỗi 100ms để đếm ngược mượt trên từng dòng prompt. */
 export function usePromptDelayTicker() {
-  const now = ref(Date.now());
-  let timer = null;
-
-  onMounted(() => {
-    timer = setInterval(() => {
-      now.value = Date.now();
-    }, 100);
-  });
-
-  onUnmounted(() => {
-    if (timer) clearInterval(timer);
-  });
-
   function secondsLeft(group, promptIndex) {
     return cooldownSecondsLeft(group, promptIndex, now.value);
   }
@@ -24,10 +18,10 @@ export function usePromptDelayTicker() {
     return isPromptInCooldown(group, promptIndex, now.value);
   }
 
-  function delayProgress(group) {
+  function delayProgress(group, promptIndex) {
     const total = Number(group?.delayTotalSeconds) || 0;
     if (total <= 0) return 0;
-    const left = secondsLeft(group);
+    const left = secondsLeft(group, promptIndex);
     if (left <= 0) return 100;
     return Math.min(100, Math.max(0, ((total - left) / total) * 100));
   }

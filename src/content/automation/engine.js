@@ -2033,6 +2033,11 @@ const l = __awaiter;
   function G(e, t) {
     for (let n = 0; n < e.pendingIndexes.length; n++) {
       const t = e.pendingIndexes[n];
+      if (e.completedPromptIndexes?.has?.(t)) {
+        e.pendingIndexes.splice(n, 1);
+        n--;
+        continue
+      }
       if (V(e, t)) return e.pendingIndexes.splice(n, 1), t
     }
     return null
@@ -2514,12 +2519,15 @@ const l = __awaiter;
       veoGroupGenerationIncomplete = (e) => {
         const total = Math.max(0, Number(e.totalCount) || 0);
         if ((e.pendingIndexes?.length ?? 0) > 0) return !0;
+        if ((e.activeGenerationCount || 0) > 0) return !0;
         const done = e.completedPromptIndexes;
         if (!(done instanceof Set)) return total > 0;
         for (let i = 0; i < total; i++) {
           if (!done.has(i)) return !0;
-          const r = veoGetResultForIndex(e, i);
-          if (!r?.success) return !0;
+          if (!e.finalRetryPassDone) {
+            const r = veoGetResultForIndex(e, i);
+            if (!r?.success) return !0;
+          }
         }
         return !1;
       },
@@ -3073,22 +3081,20 @@ const l = __awaiter;
         await K(500);
         continue
       }
-      if (e.pendingIndexes.length > 0) {
-        for (; !e.isCancelling && (e.pendingIndexes.length > 0 || (e.activeGenerationCount || 0) > 0 || veoHasPendingGeneration(e));) {
-          if (e.pendingModelSwitch) {
-            await veoTryResumeAfterModelSwitch(e, re);
-            await K(200);
-            continue;
-          }
-          if (e.isPaused) {
-            await K(500);
-            continue;
-          }
-          veoEnsurePromptWorkers(e, t, ee, re);
+      for (; !e.isCancelling && (e.pendingIndexes.length > 0 || (e.activeGenerationCount || 0) > 0 || veoHasPendingGeneration(e));) {
+        if (e.pendingModelSwitch) {
+          await veoTryResumeAfterModelSwitch(e, re);
           await K(200);
+          continue;
         }
-        if (e.isCancelling) continue;
+        if (e.isPaused) {
+          await K(500);
+          continue;
+        }
+        veoEnsurePromptWorkers(e, t, ee, re);
+        await K(200);
       }
+      if (e.isCancelling) continue;
       if (e.recoveryPassActive) {
         e.recoveryPassActive = !1;
         re(e)
