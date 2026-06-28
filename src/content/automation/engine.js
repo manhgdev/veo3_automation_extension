@@ -2083,11 +2083,6 @@ const l = __awaiter;
         hi = Math.max(lo, Math.floor(Number(max) || lo));
       if (hi <= lo) return lo;
       const span = hi - lo,
-        pickBand = (a, b) => {
-          const from = Math.min(a, b),
-            to = Math.max(a, b);
-          return from + Math.floor(Math.random() * (to - from + 1))
-        },
         recent = jobGroup._recentPromptDelays = jobGroup._recentPromptDelays || [],
         picksMap = jobGroup.promptDelayPickedSeconds ?? {},
         delayMap = jobGroup.promptDelayEndsAt ?? {},
@@ -2097,11 +2092,11 @@ const l = __awaiter;
         const sec = picksMap[k];
         Number(end) > now && "number" == typeof sec && activePicks.push(Math.round(sec))
       }
-      const minGap = Math.max(8, Math.ceil(.65 * span)),
+      const slices = Math.max(1, Math.min(Math.max(1, maxConcurrent), MAX_CONCURRENT_PROMPTS, span + 1)),
+        sliceWidth = Math.max(1, Math.ceil((span + 1) / slices)),
+        minGap = Math.max(1, Math.min(Math.max(8, Math.ceil(.65 * span)), sliceWidth)),
         farEnough = candidate => recent.every(r => Math.abs(candidate - r) >= minGap) && activePicks.every(
           r => Math.abs(candidate - r) >= minGap),
-        slices = Math.max(1, Math.min(Math.max(1, maxConcurrent), MAX_CONCURRENT_PROMPTS, span + 1)),
-        sliceWidth = Math.max(1, Math.ceil((span + 1) / slices)),
         occupied = new Set();
       for (const p of activePicks) occupied.add(Math.min(slices - 1, Math.floor((p - lo) / sliceWidth)));
       let sliceIndex = activeDelayCount % slices;
@@ -2111,19 +2106,24 @@ const l = __awaiter;
       const trySlice = idx => {
         const sliceLo = Math.min(hi, lo + idx * sliceWidth),
           sliceHi = Math.min(hi, sliceLo + sliceWidth - 1);
-        return pickBand(sliceLo, sliceHi)
-      };
+        return sliceLo + Math.floor(Math.random() * (sliceHi - sliceLo + 1))
+      },
+        commitPick = candidate => (jobGroup.lastPromptDelaySeconds = candidate, recent.push(candidate), recent
+          .length > MAX_CONCURRENT_PROMPTS && recent.shift(), candidate);
       for (let round = 0; round < slices; round++) {
         const idx = (sliceIndex + round) % slices;
         for (let attempt = 0; attempt < 12; attempt++) {
           const candidate = trySlice(idx);
-          if (farEnough(candidate)) return jobGroup.lastPromptDelaySeconds = candidate, recent.push(
-            candidate), recent.length > MAX_CONCURRENT_PROMPTS && recent.shift(), candidate
+          if (farEnough(candidate)) return commitPick(candidate)
         }
+        const sliceLo = Math.min(hi, lo + idx * sliceWidth),
+          sliceHi = Math.min(hi, sliceLo + sliceWidth - 1),
+          mid = Math.min(hi, sliceLo + Math.floor((sliceHi - sliceLo) / 2));
+        if (farEnough(mid)) return commitPick(mid)
       }
-      const fallback = activeDelayCount % 2 ? hi : lo;
-      return jobGroup.lastPromptDelaySeconds = fallback, recent.push(fallback), recent.length >
-        MAX_CONCURRENT_PROMPTS && recent.shift(), fallback
+      const spreadStep = Math.max(1, Math.round(span / slices)),
+        fallback = Math.min(hi, lo + (activeDelayCount % slices) * spreadStep);
+      return commitPick(fallback)
     },
     veoWaitGenerationCooldown = async (e, t, promptIndex) => {
         const n = e.promptDelaySecondsMin ?? 0,
@@ -2131,7 +2131,7 @@ const l = __awaiter;
         if (e.promptDelayEndsAt = e.promptDelayEndsAt ?? {}, n <= 0 && r <= 0) return veoClearPromptDelay(e,
           promptIndex, t), !e.isCancelling;
         const releasePick = await veoAcquireDelayPickLock(e);
-        let waitSec;
+        let waitSec, endsAt;
         try {
           if (!e._firstPromptCooldownUsed && !(e.processedCount || 0) && !(e.activeGenerationCount || 0)) {
             e._firstPromptCooldownUsed = !0;
@@ -2140,18 +2140,19 @@ const l = __awaiter;
           }
           const activeCount = veoCountActivePromptDelays(e),
             maxConc = veoEffectiveConcurrent(e.concurrentPrompts);
-          waitSec = veoPickSpreadPromptDelay(e, n, r, activeCount, maxConc)
+          waitSec = veoPickSpreadPromptDelay(e, n, r, activeCount, maxConc);
+          e.promptDelayPickedSeconds = e.promptDelayPickedSeconds ?? {}, e.promptDelayPickedSeconds[promptIndex] =
+            waitSec;
+          endsAt = Date.now() + waitSec * 1e3;
+          e.promptDelayEndsAt[promptIndex] = endsAt, e.delayTotalSeconds = Math.ceil(waitSec);
+          veoSyncDelayLegacyFields(e), t(e)
         } finally {
           releasePick()
         }
-        e.promptDelayPickedSeconds = e.promptDelayPickedSeconds ?? {}, e.promptDelayPickedSeconds[promptIndex] =
-          waitSec;
-        let endsAt = Date.now() + waitSec * 1e3;
-        e.promptDelayEndsAt[promptIndex] = endsAt, e.delayTotalSeconds = Math.ceil(waitSec);
         const tick = () => {
           e.promptDelayEndsAt[promptIndex] = endsAt, veoSyncDelayLegacyFields(e), t(e)
         };
-        for (tick(); Date.now() < endsAt;) {
+        for (; Date.now() < endsAt;) {
           if (e.isCancelling) return veoClearPromptDelay(e, promptIndex, t), !1;
           if (e.isPaused) {
             const pauseStart = Date.now();
@@ -2880,6 +2881,9 @@ const l = __awaiter;
             delayTotalSeconds: e.delayTotalSeconds ?? null,
             promptDelayEndsAt: {
               ...(e.promptDelayEndsAt ?? {})
+            },
+            promptDelayPickedSeconds: {
+              ...(e.promptDelayPickedSeconds ?? {})
             },
             results: e.results.map(e => ({
               index: e.index,
