@@ -107,6 +107,17 @@ export function usePromptGroups() {
           }
           if (!data.downloadPayloads?.length && prev?.downloadPayloads?.length) {
             merged.downloadPayloads = prev.downloadPayloads;
+          } else if (Array.isArray(data.downloadPayloads) && Array.isArray(prev?.downloadPayloads)) {
+            merged.downloadPayloads = data.downloadPayloads.map((payload, idx) => {
+              const prevPayload =
+                prev.downloadPayloads.find(
+                  (p) => (p.promptIndex ?? idx + 1) === (payload?.promptIndex ?? idx + 1),
+                ) ?? prev.downloadPayloads[idx];
+              if (!payload?.tileIds?.length && prevPayload?.tileIds?.length) {
+                return { ...payload, tileIds: prevPayload.tileIds };
+              }
+              return payload;
+            });
           }
           if (Array.isArray(data.results) && Array.isArray(prev?.results)) {
             merged.results = data.results.map((result, idx) => {

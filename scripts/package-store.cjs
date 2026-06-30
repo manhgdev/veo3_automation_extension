@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
  * Chrome Web Store zip from dist/
+ * Cross-platform (macOS / Windows / Linux) — pure Node, no tar/zip/unzip CLI.
  */
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const AdmZip = require('adm-zip');
 
 const root = path.join(__dirname, '..');
 const distDir = path.join(root, 'dist');
@@ -47,42 +49,56 @@ function copyIntoStaging() {
   }
 }
 
+/** Normalize zip entry paths (forward slashes, no leading ./). */
+function normalizeZipEntry(name) {
+  return name.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+}
+
+function listZipFileEntries(zipPath) {
+  const zip = new AdmZip(zipPath);
+  return zip
+    .getEntries()
+    .map((entry) => normalizeZipEntry(entry.entryName))
+    .filter((name) => name.length > 0);
+}
+
 function assertZipContents(zipPath) {
   const stat = fs.statSync(zipPath);
   if (stat.size < 50_000) {
     throw new Error(`zip too small (${stat.size} bytes) — packaging failed`);
   }
 
-  const listing = execSync(`tar -tf "${zipPath}"`, { encoding: 'utf8' });
-  const entries = listing.trim().split(/\r?\n/).filter(Boolean);
-  const hasManifest = entries.some((entry) => {
-    const normalized = entry.replace(/\\/g, '/').replace(/^\.\//, '');
-    return normalized === 'manifest.json';
-  });
-  if (!hasManifest) {
-    throw new Error('zip missing manifest.json at root');
+  const entries = listZipFileEntries(zipPath);
+
+  if (!entries.includes('manifest.json')) {
+    const misplaced = entries.find((entry) => entry.endsWith('/manifest.json'));
+    throw new Error(
+      misplaced
+        ? `zip has manifest at "${misplaced}" — Chrome Web Store requires manifest.json at zip root`
+        : 'zip missing manifest.json at root',
+    );
   }
+
+  const badPrefix = entries.find((entry) => entry.startsWith('./'));
+  if (badPrefix) {
+    throw new Error(`zip entry "${badPrefix}" has ./ prefix — Chrome Web Store may reject the package`);
+  }
+
   if (entries.length < 10) {
     throw new Error(`zip has too few entries (${entries.length})`);
   }
-  console.log(`  OK  ${entries.length} entries (manifest.json at root)`);
+
+  console.log(`  OK  ${entries.length} entries (manifest.json at root, ${process.platform})`);
 }
 
 function createZip(zipPath) {
   fs.mkdirSync(path.dirname(zipPath), { recursive: true });
   if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-  if (process.platform === 'win32') {
-    const psStaging = path.resolve(stagingDir).replace(/'/g, "''");
-    const psZip = path.resolve(zipPath).replace(/'/g, "''");
-    // Compress-Archive: Explorer/Chrome Web Store đọc được (không có prefix ./)
-    execSync(
-      `powershell -NoProfile -Command "Compress-Archive -Path '${psStaging}\\*' -DestinationPath '${psZip}' -CompressionLevel Optimal -Force"`,
-      { stdio: 'inherit', timeout: 120_000 },
-    );
-  } else {
-    execSync(`tar -a -cf "${zipPath}" -C "${stagingDir}" .`, { stdio: 'inherit' });
-  }
+  const zip = new AdmZip();
+  // Empty zipPath → files at archive root (manifest.json, not ./manifest.json or staging/manifest.json).
+  zip.addLocalFolder(stagingDir, '');
+  zip.writeZip(zipPath);
 
   assertZipContents(zipPath);
 }

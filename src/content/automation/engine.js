@@ -1935,9 +1935,53 @@ const l = __awaiter;
     S(`🔄 Chạy lại prompt lỗi xong: ${succeeded} thành công, ${failed} lỗi`)
   }
 
+  function veoFailedDownloadResult(downloadItem, index, promptIndex, error) {
+    const tileIds = Array.isArray(downloadItem?.tileIds) && downloadItem.tileIds.length ?
+      downloadItem.tileIds.slice() :
+      void 0;
+    return {
+      index,
+      promptIndex,
+      success: !1,
+      downloadComplete: !0,
+      ...tileIds?.length ? {
+        tileIds
+      } : {},
+      error
+    }
+  }
+
+  function veoDownloadRecoveryPass(e, t) {
+    if (e.downloadRecoveryPassDone || e.downloadOnly) return !1;
+    const n = (e.results || []).filter(e => !e.cancelled && !e.success && e.downloadComplete && Array.isArray(e
+      .tileIds) && e.tileIds.length).map(e => e.index ?? e.promptIndex - 1).sort((e, t) => e - t);
+    if (!n.length) return !1;
+    e.downloadRecoveryPassDone = !0, e.recoveryPassActive = !0;
+    for (const r of n) {
+      const o = veoGetResultForIndex(e, r);
+      if (!o?.tileIds?.length) continue;
+      o.success = !0, o.downloadComplete = !1, delete o.error, e.downloadRetryCountByIndex && delete e
+        .downloadRetryCountByIndex[r];
+      const i = e.payloads[r] || {};
+      ue(e, r, {
+        tileIds: o.tileIds.slice(),
+        config: {
+          ...i,
+          groupId: e.id
+        },
+        promptIndex: i.promptIndex ?? r + 1,
+        index: r,
+        retryCount: 0
+      }, t)
+    }
+    return e.nextDownloadIndex = Math.min(e.nextDownloadIndex ?? 0, n[0]), re(e), S(
+      `🔄 Tải lại ${n.length} file lỗi (giữ tile đã tạo)`), !0
+  }
+
   function Be(e) {
     if (e.finalRetryPassDone) return !1;
-    const t = e.results.filter(e => !e.success && !e.cancelled).map(e => e.index).sort((e, t) => e - t);
+    const t = e.results.filter(e => !e.success && !e.cancelled && !(Array.isArray(e.tileIds) && e.tileIds.length))
+      .map(e => e.index ?? e.promptIndex - 1).sort((e, t) => e - t);
     if (e.finalRetryPassDone = !0, 0 === t.length) return !1;
     e.recoveryPassActive = !0;
     e.recoveryPassRetryIndexes = [...t];
@@ -2649,6 +2693,7 @@ const l = __awaiter;
         jobGroup.pendingIndexes = [];
         jobGroup.status = "error";
         jobGroup.finalRetryPassDone = !0;
+        jobGroup.downloadRecoveryPassDone = !0;
         jobGroup.pendingDownloads = {};
         jobGroup.nextDownloadIndex = jobGroup.totalCount;
         onUpdate?.(jobGroup);
@@ -2768,13 +2813,8 @@ const l = __awaiter;
   function Y(e, t, n, r, o) {
     const i = e.index ?? e.config?.promptIndex ?? 0,
       a = n.find(e => e.id === t);
-    a && (a.results = a.results.filter(e => e.index !== i), a.results.push({
-      index: i,
-      promptIndex: e.config?.promptIndex ?? i,
-      success: !1,
-      downloadComplete: !0,
-      error: o || "Download failed"
-    }), r(a), fe(a, ee))
+    a && (a.results = a.results.filter(e => e.index !== i), a.results.push(veoFailedDownloadResult(e, i, e
+      .config?.promptIndex ?? i + 1, o || "Download failed")), r(a), fe(a, ee))
   }
 
   function J(e, t, n, r) {
@@ -2805,13 +2845,9 @@ const l = __awaiter;
         isCancelling: !!s.isCancelling
       }), void r(s)
     }
-    s && (s.results = s.results.filter(e => e.index !== a), s.results.push({
-      index: a,
-      promptIndex: e.config?.promptIndex ?? a,
-      success: !1,
-      downloadComplete: !0,
-      error: `Download failed (max ${o} retries)`
-    }), s.completedPromptIndexes.add(a), fe(s, ee), r(s))
+    s && (s.results = s.results.filter(e => e.index !== a), s.results.push(veoFailedDownloadResult(e, a, e.config
+      ?.promptIndex ?? a + 1, `Download failed (max ${o} retries)`)), s.completedPromptIndexes.add(a), fe(s, ee),
+      r(s))
   }
   async function veoProcessDownloadJob(e, t) {
     for (const n of e.items) {
@@ -2968,7 +3004,7 @@ const l = __awaiter;
         downloadComplete: !1
       })), e.processedCount = e.totalCount, e.pendingIndexes = [], e.completedPromptIndexes = new Set(e
         .results.map(e => e.index)), e.nextDownloadIndex = 0, e.pendingDownloads = {}, e.downloadItems = [], e
-      .downloadRetryCountByIndex = {}, e.finalRetryPassDone = !0, e.recoveryPassActive = !1, e.errorMessage = "", re(
+      .downloadRetryCountByIndex = {}, e.finalRetryPassDone = !0, e.downloadRecoveryPassDone = !0, e.recoveryPassActive = !1, e.errorMessage = "", re(
         e);
     for (const o of r.items) {
       if (e.isCancelling) break;
@@ -3048,6 +3084,7 @@ const l = __awaiter;
         promptDelaySecondsMin: 0,
         promptDelaySecondsMax: 0,
         finalRetryPassDone: !0,
+        downloadRecoveryPassDone: !0,
         recoveryPassActive: !1,
         flowSettingsApplied: !1
       };
@@ -3108,6 +3145,7 @@ const l = __awaiter;
       if (e.isCancelling) continue;
       if (0 === e.pendingIndexes.length) {
         if (e.fatalError) continue;
+        if (veoDownloadRecoveryPass(e, ee)) continue;
         if (Be(e)) continue;
         if (veoRefillPendingIndexes(e)) {
           re(e);
@@ -3268,6 +3306,7 @@ const l = __awaiter;
           knownTileIdsBeforeSubmit: new Set,
           claimedTileIds: new Set,
           finalRetryPassDone: !1,
+          downloadRecoveryPassDone: !1,
           recoveryPassActive: !1,
           flowSettingsApplied: !1,
           fatalError: void 0,
@@ -3300,6 +3339,7 @@ const l = __awaiter;
           knownTileIdsBeforeSubmit: new Set,
           claimedTileIds: new Set,
           finalRetryPassDone: !1,
+          downloadRecoveryPassDone: !1,
           recoveryPassActive: !1,
           flowSettingsApplied: !1
         };

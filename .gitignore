@@ -7,6 +7,5 @@ dist/
 *.mp4
 *.mp3
 *.srt
-
-# Generated at build (messages.source.js + locale-overlays.js)
-src/i18n/messages.json
+*.DS_Store
+package-lock.json

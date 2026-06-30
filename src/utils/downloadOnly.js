@@ -5,13 +5,24 @@ export function hasStoredTileIds(group) {
   return group.results?.some((r) => r.tileIds?.length) ?? false;
 }
 
+export function hasFailedDownloads(group) {
+  return group?.results?.some((r) => !r.cancelled && (!r.success || !r.downloadComplete)) ?? false;
+}
+
+function needsRedownload(group, index) {
+  const result = group.results?.find((r) => (r.index ?? r.promptIndex - 1) === index);
+  if (!result) return true;
+  return !result.success || !result.downloadComplete;
+}
+
 /** Có thể tải lại tile trên Flow cho group đã xong (không tạo lại). */
 export function canRedownloadGroup(group) {
   if (!group || group.isActive || group.downloadOnly) return false;
   if (!['completed', 'error', 'cancelled'].includes(group.status)) return false;
   const total = Number(group.totalCount) || 0;
   if (total <= 0) return false;
-  return hasStoredTileIds(group);
+  if (!hasStoredTileIds(group)) return false;
+  return hasFailedDownloads(group);
 }
 
 export function stripDownloadPayload(payload, groupId) {
@@ -34,10 +45,11 @@ export function stripDownloadPayload(payload, groupId) {
   return entry;
 }
 
-export function buildDownloadPayloadsFromGroup(group, settings, selectedMode) {
+export function buildDownloadPayloadsFromGroup(group, settings, selectedMode, { onlyFailed = true } = {}) {
   if (group.downloadPayloads?.length) {
     return group.downloadPayloads
       .map((p, i) => {
+        if (onlyFailed && !needsRedownload(group, i)) return null;
         const stripped = stripDownloadPayload(p, group.id);
         if (!stripped) return null;
         const result = group.results?.find((r) => (r.index ?? r.promptIndex - 1) === i);
@@ -59,16 +71,21 @@ export function buildDownloadPayloadsFromGroup(group, settings, selectedMode) {
   const mode = selectedMode || 'textToImage';
   const quality = resolveDefaultQuality(mode, settings);
 
-  return previews.map((preview, i) => ({
-    prompt: preview,
-    promptIndex: i + 1,
-    mode,
-    outputCount: Math.max(1, Number(settings.outputCount) || 1),
-    folderName: settings.folderName ?? '',
-    autoChangeFileName: settings.autoChangeFileName,
-    autoDownloadResourceQuality: quality,
-    groupId: group.id,
-  }));
+  return previews
+    .map((preview, i) => {
+      if (onlyFailed && !needsRedownload(group, i)) return null;
+      return {
+        prompt: preview,
+        promptIndex: i + 1,
+        mode,
+        outputCount: Math.max(1, Number(settings.outputCount) || 1),
+        folderName: settings.folderName ?? '',
+        autoChangeFileName: settings.autoChangeFileName,
+        autoDownloadResourceQuality: quality,
+        groupId: group.id,
+      };
+    })
+    .filter(Boolean);
 }
 
 function resolveDefaultQuality(mode, settings) {
