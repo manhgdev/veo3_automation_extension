@@ -30,6 +30,10 @@ function copyIntoStaging() {
     const src = path.join(distDir, rel);
     const dest = path.join(stagingDir, rel);
 
+    if (!fs.existsSync(src)) {
+      throw new Error(`dist/${rel} missing — run npm run build`);
+    }
+
     if (rel === 'panel') {
       fs.mkdirSync(dest, { recursive: true });
       for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -43,21 +47,44 @@ function copyIntoStaging() {
   }
 }
 
+function assertZipContents(zipPath) {
+  const stat = fs.statSync(zipPath);
+  if (stat.size < 50_000) {
+    throw new Error(`zip too small (${stat.size} bytes) — packaging failed`);
+  }
+
+  const listing = execSync(`tar -tf "${zipPath}"`, { encoding: 'utf8' });
+  const entries = listing.trim().split(/\r?\n/).filter(Boolean);
+  const hasManifest = entries.some((entry) => {
+    const normalized = entry.replace(/\\/g, '/').replace(/^\.\//, '');
+    return normalized === 'manifest.json';
+  });
+  if (!hasManifest) {
+    throw new Error('zip missing manifest.json at root');
+  }
+  if (entries.length < 10) {
+    throw new Error(`zip has too few entries (${entries.length})`);
+  }
+  console.log(`  OK  ${entries.length} entries (manifest.json at root)`);
+}
+
 function createZip(zipPath) {
   fs.mkdirSync(path.dirname(zipPath), { recursive: true });
   if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
   if (process.platform === 'win32') {
-    const psStaging = stagingDir.replace(/'/g, "''");
-    const psZip = zipPath.replace(/'/g, "''");
+    const psStaging = path.resolve(stagingDir).replace(/'/g, "''");
+    const psZip = path.resolve(zipPath).replace(/'/g, "''");
+    // Compress-Archive: Explorer/Chrome Web Store đọc được (không có prefix ./)
     execSync(
-      `powershell -NoProfile -Command "Get-ChildItem -Path '${psStaging}' | Compress-Archive -DestinationPath '${psZip}' -Force"`,
-      { stdio: 'inherit' },
+      `powershell -NoProfile -Command "Compress-Archive -Path '${psStaging}\\*' -DestinationPath '${psZip}' -CompressionLevel Optimal -Force"`,
+      { stdio: 'inherit', timeout: 120_000 },
     );
-    return;
+  } else {
+    execSync(`tar -a -cf "${zipPath}" -C "${stagingDir}" .`, { stdio: 'inherit' });
   }
 
-  execSync(`cd "${stagingDir}" && zip -r "${zipPath}" .`, { stdio: 'inherit' });
+  assertZipContents(zipPath);
 }
 
 function main() {
@@ -69,14 +96,18 @@ function main() {
   }
 
   const version = readManifestVersion();
+  console.log(`\n=== Staging v${version} ===`);
   copyIntoStaging();
+  console.log('  OK  copied store files');
 
   const zipName = `veo-extension-v${version}.zip`;
   const zipPath = path.join(root, 'dist', zipName);
+  console.log(`\n=== Zip ${zipName} ===`);
   createZip(zipPath);
   removeDir(stagingDir);
 
-  console.log(`\n✅ ${zipPath}`);
+  const sizeMb = (fs.statSync(zipPath).size / (1024 * 1024)).toFixed(2);
+  console.log(`\n✅ ${zipPath} (${sizeMb} MB)`);
 }
 
 try {

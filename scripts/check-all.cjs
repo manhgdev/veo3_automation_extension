@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /** Sanity check — build extension → dist/ */
+const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { pathToFileURL } = require('url');
@@ -16,34 +17,43 @@ const jsFiles = [
   'panel/app.js',
 ];
 
-let failed = false;
-
-console.log('=== Build extension ===');
-try {
-  execSync('npm run build', { cwd: root, stdio: 'inherit' });
-} catch {
-  failed = true;
-}
-
-console.log('\n=== Syntax (node --check) ===');
-for (const rel of jsFiles) {
-  const abs = path.join(dist, rel);
-  if (!fsExists(abs)) {
-    console.error(`  FAIL  missing dist/${rel}`);
-    failed = true;
-    continue;
-  }
+function fsExists(p) {
   try {
-    execSync(`node --check "${abs}"`, { stdio: 'pipe' });
-    console.log(`  OK  dist/${rel}`);
+    fs.accessSync(p);
+    return true;
   } catch {
-    console.error(`  FAIL  dist/${rel}`);
-    failed = true;
+    return false;
   }
 }
 
-console.log('\n=== ES module parse (panel/app.js) ===');
-(async () => {
+async function main() {
+  let failed = false;
+
+  console.log('=== Build extension ===');
+  try {
+    execSync('npm run build', { cwd: root, stdio: 'inherit' });
+  } catch {
+    failed = true;
+  }
+
+  console.log('\n=== Syntax (node --check) ===');
+  for (const rel of jsFiles) {
+    const abs = path.join(dist, rel);
+    if (!fsExists(abs)) {
+      console.error(`  FAIL  missing dist/${rel}`);
+      failed = true;
+      continue;
+    }
+    try {
+      execSync(`node --check "${abs}"`, { stdio: 'pipe' });
+      console.log(`  OK  dist/${rel}`);
+    } catch {
+      console.error(`  FAIL  dist/${rel}`);
+      failed = true;
+    }
+  }
+
+  console.log('\n=== ES module parse (panel/app.js) ===');
   try {
     await import(pathToFileURL(path.join(dist, 'panel/app.js')).href);
     console.log('  OK  panel/app.js');
@@ -53,6 +63,8 @@ console.log('\n=== ES module parse (panel/app.js) ===');
       failed = true;
     } else if (e instanceof ReferenceError && /chrome|window|navigator|localStorage/.test(e.message || '')) {
       console.log(`  OK  panel/app.js parses (${e.message} expected outside Chrome)`);
+    } else {
+      console.log(`  OK  panel/app.js loads (${e?.message || e})`);
     }
   }
 
@@ -77,7 +89,7 @@ console.log('\n=== ES module parse (panel/app.js) ===');
   }
   if (!failed) {
     try {
-      const css = require('fs').readFileSync(path.join(dist, 'panel/assets/main.css'), 'utf8');
+      const css = fs.readFileSync(path.join(dist, 'panel/assets/main.css'), 'utf8');
       if (!css.includes('url(./primeicons.woff2)')) {
         console.error('  FAIL  main.css missing primeicons.woff2 url()');
         failed = true;
@@ -92,9 +104,7 @@ console.log('\n=== ES module parse (panel/app.js) ===');
 
   console.log('\n=== i18n decode ===');
   try {
-    const messages = JSON.parse(
-      require('fs').readFileSync(path.join(root, 'src/i18n/messages.json'), 'utf8'),
-    );
+    const messages = JSON.parse(fs.readFileSync(path.join(root, 'src/i18n/messages.json'), 'utf8'));
     let empty = 0;
     const walk = (o) => {
       if (o && typeof o === 'object' && !Array.isArray(o)) {
@@ -120,14 +130,11 @@ console.log('\n=== ES module parse (panel/app.js) ===');
   }
 
   console.log('\n✅ OK — Load unpacked: dist/');
-  console.log(`   Source: src/`);
-})();
-
-function fsExists(p) {
-  try {
-    require('fs').accessSync(p);
-    return true;
-  } catch {
-    return false;
-  }
+  console.log('   Source: src/');
+  process.exit(0);
 }
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
