@@ -1,6 +1,6 @@
 import { createApp } from 'vue';
-import './assets/panel-shell.css';
 import './assets/style.css';
+import './assets/panel-shell.css';
 
 import App from './App.vue';
 import { i18n } from './i18n/index.js';

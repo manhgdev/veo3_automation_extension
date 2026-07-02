@@ -5,17 +5,22 @@ import {
   SETTINGS_STORAGE_KEY,
   RESET_SETTINGS,
   migrateSettings,
+  FLOW_INPUT_CONFIG,
+  UI_CONFIG,
 } from '@shared/config.js';
 import { beginNewBrowserSession, markAllChromeWindowsClosed } from '@shared/beforeUseTipSession.js';
+
+let panelPopupWindowId = null;
 
 chrome.runtime.onStartup.addListener(() => {
   void beginNewBrowserSession();
 });
 
-chrome.windows.onRemoved.addListener(() => {
+chrome.windows.onRemoved.addListener((windowId) => {
   void chrome.windows.getAll({ windowTypes: ['normal'] }).then((windows) => {
     if (windows.length === 0) void markAllChromeWindowsClosed();
   });
+  if (windowId === panelPopupWindowId) panelPopupWindowId = null;
 });
 
 async function getTabUrl(tab) {
@@ -68,8 +73,14 @@ async function isActiveTabOnFlowPage() {
 
 async function findFlowTab() {
   const active = await getActiveBrowserTab();
-  if (!active?.id || !(await detectFlowPageOnTab(active))) return null;
-  return active;
+  if (active?.id && (await detectFlowPageOnTab(active))) return active;
+
+  const tabs = await chrome.tabs.query({ url: ['https://labs.google/*'] });
+  for (const tab of tabs) {
+    if (tab?.id && (await detectFlowPageOnTab(tab))) return tab;
+  }
+
+  return null;
 }
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -187,6 +198,7 @@ const PANEL_RELAY_TYPES = new Set([
   'MODEL_QUOTA_SWITCH',
   'UNUSUAL_ACTIVITY',
   'UNUSUAL_ACTIVITY_FIRST',
+  'CONTENT_BLOCK_PROMPT',
 ]);
 
 function relayToPanel(message) {
@@ -244,8 +256,10 @@ function markRecentDownload(url, targetPath) {
 
 function sanitizeDownloadSegment(segment) {
   return String(segment || '')
+    .replace(/\s\|\s*[\s\S]*$/, '')
     .replace(/:/g, '.')
     .replace(/[<>"/\\|?*\u0000-\u001f]/g, '')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -316,9 +330,35 @@ function onDownloadDeterminingFilename(item, suggest) {
 function enableSidePanelOnActionClick() {
   if (!chrome.sidePanel?.setPanelBehavior) return;
 
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((err) => {
+  const openOnClick = UI_CONFIG.panelPresentation === 'sidePanel';
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: openOnClick }).catch((err) => {
     console.error('[VEO] setPanelBehavior failed:', err);
   });
+}
+
+async function openPanelPopupWindow() {
+  const width = Math.max(400, Number(UI_CONFIG.panelWindowWidth) || 640);
+  const height = Math.max(500, Number(UI_CONFIG.panelWindowHeight) || 920);
+  const panelUrl = chrome.runtime.getURL('panel/index.html');
+
+  if (panelPopupWindowId != null) {
+    try {
+      await chrome.windows.get(panelPopupWindowId);
+      await chrome.windows.update(panelPopupWindowId, { focused: true, drawAttention: true });
+      return;
+    } catch {
+      panelPopupWindowId = null;
+    }
+  }
+
+  const created = await chrome.windows.create({
+    url: panelUrl,
+    type: 'popup',
+    width,
+    height,
+    focused: true,
+  });
+  panelPopupWindowId = created?.id ?? null;
 }
 
 function openSidePanelForTab(tab) {
@@ -378,6 +418,36 @@ async function attachDebugger(tabId) {
   }
 }
 
+async function detachDebugger(tabId) {
+  if (!debuggerAttachedTabs.has(tabId)) return;
+  try {
+    await chrome.debugger.detach({ tabId });
+  } catch {
+    // ignore
+  }
+  debuggerAttachedTabs.delete(tabId);
+}
+
+async function runWithDebugger(tabId, fn) {
+  await attachDebugger(tabId);
+  try {
+    return await fn();
+  } finally {
+    if (FLOW_INPUT_CONFIG.cdpTransient) {
+      await detachDebugger(tabId);
+    }
+  }
+}
+
+function jitterCdpPoint(x, y) {
+  const spread = FLOW_INPUT_CONFIG.cdpClickJitter ?? 0;
+  if (!spread) return { x, y };
+  return {
+    x: Math.round(x + (Math.random() - 0.5) * spread),
+    y: Math.round(y + (Math.random() - 0.5) * spread),
+  };
+}
+
 async function clearSiteStorage(tabId) {
   const sensitivePrefixes = [
     '__Secure',
@@ -406,11 +476,22 @@ async function clearSiteStorage(tabId) {
 
   if (!tabId) return;
 
-  await attachDebugger(tabId);
-  await chrome.debugger.sendCommand({ tabId }, 'Storage.clearDataForOrigin', {
-    origin: 'https://labs.google',
-    storageTypes: 'local_storage',
-  });
+  try {
+    await attachDebugger(tabId);
+    await chrome.debugger.sendCommand({ tabId }, 'Storage.clearDataForOrigin', {
+      origin: 'https://labs.google',
+      storageTypes: 'local_storage,session_storage,indexeddb,cache_storage,service_workers',
+    });
+  } finally {
+    if (debuggerAttachedTabs.has(tabId)) {
+      try {
+        await chrome.debugger.detach({ tabId });
+      } catch {
+        // ignore detach errors
+      }
+      debuggerAttachedTabs.delete(tabId);
+    }
+  }
 }
 
 async function enableNetwork(tabId) {
@@ -436,6 +517,12 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.action.onClicked.addListener((tab) => {
+  if (UI_CONFIG.panelPresentation === 'popup') {
+    void openPanelPopupWindow().catch((err) => {
+      console.error('[VEO] openPanelPopupWindow failed:', err);
+    });
+    return;
+  }
   openSidePanelForTab(tab);
 });
 
@@ -542,6 +629,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
 
+    case 'DOWNLOAD_TEXT_BLOB': {
+      const { content, filename, folder } = message;
+      const safeName = sanitizeDownloadSegment(filename || 'error.txt');
+      const fullPath = folder?.trim()
+        ? sanitizeDownloadPath(`${folder.trim()}/${safeName}`)
+        : sanitizeDownloadSegment(safeName);
+      const text = String(content ?? '');
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+
+      chrome.downloads.download({ url, filename: fullPath, saveAs: false }, (downloadId) => {
+        const error = chrome.runtime?.lastError;
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        sendResponse(
+          !error && downloadId
+            ? { success: true, downloadId, filename: fullPath }
+            : { success: false, error: error?.message || 'Failed to download text file' },
+        );
+      });
+      return true;
+    }
+
     case 'SET_FOLDER_NAME': {
       const { folderName, prefix, autoChangeFileName } = message;
 
@@ -592,8 +701,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'CS':
       (async () => {
         try {
-          await clearSiteStorage(sender.tab?.id);
-          sendResponse({ success: true });
+          let tabId = message.tabId ?? sender.tab?.id;
+          if (!tabId) {
+            const tab = await findFlowTab();
+            tabId = tab?.id;
+          }
+          if (!tabId) {
+            sendResponse({ success: false, error: 'No Flow tab found' });
+            return;
+          }
+          await clearSiteStorage(tabId);
+          sendResponse({ success: true, tabId });
         } catch (error) {
           sendResponse({ success: false, error: String(error) });
         }
@@ -610,12 +728,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       (async () => {
         try {
           await attachDebugger(tabId);
-          try {
-            await enableNetwork(tabId);
-          } catch {
-            // network commands are optional
-          }
           sendResponse({ success: true });
+          if (FLOW_INPUT_CONFIG.cdpTransient) {
+            await detachDebugger(tabId);
+          }
         } catch (error) {
           const messageText = error instanceof Error ? error.message : String(error);
           if (!messageText.includes('already attached')) {
@@ -624,6 +740,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
           debuggerAttachedTabs.add(tabId);
           sendResponse({ success: true });
+          if (FLOW_INPUT_CONFIG.cdpTransient) {
+            await detachDebugger(tabId);
+          }
         }
       })();
       return true;
@@ -661,8 +780,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       (async () => {
         try {
-          await attachDebugger(tabId);
-          await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text: message.text });
+          await runWithDebugger(tabId, async () => {
+            await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text: message.text });
+          });
           sendResponse({ success: true });
         } catch (error) {
           sendResponse({ success: false, error: String(error) });
@@ -680,43 +800,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       (async () => {
         try {
-          await attachDebugger(tabId);
+          await runWithDebugger(tabId, async () => {
+            const keyEvent = {
+              key: message.key,
+              code: message.code,
+              windowsVirtualKeyCode: message.keyCode,
+              nativeVirtualKeyCode: message.keyCode,
+            };
 
-          const keyEvent = {
-            key: message.key,
-            code: message.code,
-            windowsVirtualKeyCode: message.keyCode,
-            nativeVirtualKeyCode: message.keyCode,
-          };
+            if (message.text !== undefined) {
+              keyEvent.text = message.text;
+              keyEvent.unmodifiedText = message.text;
+            }
 
-          if (message.text !== undefined) {
-            keyEvent.text = message.text;
-            keyEvent.unmodifiedText = message.text;
-          }
+            if (message.modifiers !== undefined) {
+              keyEvent.modifiers = message.modifiers;
+            }
 
-          if (message.modifiers !== undefined) {
-            keyEvent.modifiers = message.modifiers;
-          }
-
-          if (message.keyType) {
-            await chrome.debugger.sendCommand(
-              { tabId },
-              'Input.dispatchKeyEvent',
-              { type: message.keyType, ...keyEvent },
-            );
-          } else {
-            await chrome.debugger.sendCommand(
-              { tabId },
-              'Input.dispatchKeyEvent',
-              { type: 'keyDown', ...keyEvent },
-            );
-            await chrome.debugger.sendCommand(
-              { tabId },
-              'Input.dispatchKeyEvent',
-              { type: 'keyUp', ...keyEvent },
-            );
-          }
-
+            if (message.keyType) {
+              await chrome.debugger.sendCommand(
+                { tabId },
+                'Input.dispatchKeyEvent',
+                { type: message.keyType, ...keyEvent },
+              );
+            } else {
+              await chrome.debugger.sendCommand(
+                { tabId },
+                'Input.dispatchKeyEvent',
+                { type: 'keyDown', ...keyEvent },
+              );
+              await chrome.debugger.sendCommand(
+                { tabId },
+                'Input.dispatchKeyEvent',
+                { type: 'keyUp', ...keyEvent },
+              );
+            }
+          });
           sendResponse({ success: true });
         } catch (error) {
           sendResponse({ success: false, error: String(error) });
@@ -734,13 +853,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       (async () => {
         try {
-          await attachDebugger(tabId);
-          await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
-            type: 'mouseMoved',
-            x: message.x,
-            y: message.y,
-            button: 'none',
-            modifiers: 0,
+          const { x, y } = jitterCdpPoint(message.x, message.y);
+          await runWithDebugger(tabId, async () => {
+            await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+              type: 'mouseMoved',
+              x,
+              y,
+              button: 'none',
+              modifiers: 0,
+            });
           });
           sendResponse({ success: true });
         } catch (error) {
@@ -760,8 +881,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       (async () => {
         const target = { tabId };
-        const x = message.x;
-        const y = message.y;
+        const { x, y } = jitterCdpPoint(message.x, message.y);
 
         const click = async () => {
           await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
@@ -792,8 +912,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         };
 
         try {
-          await attachDebugger(tabId);
-          await click();
+          await runWithDebugger(tabId, click);
           sendResponse({ success: true });
         } catch (error) {
           const messageText = error instanceof Error ? error.message : String(error);

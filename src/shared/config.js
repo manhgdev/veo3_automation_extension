@@ -12,21 +12,49 @@ export const UI_CONFIG = {
   showPlanBanner: false,
   isPricingEnabled: false,
   dailyPromptLimit: 999999,
+  /**
+   * 'popup' = cửa sổ rộng khi bấm icon.
+   * 'sidePanel' = sidebar Chrome.
+   */
+  panelPresentation: 'sidePanel',
+  panelWindowWidth: 640,
+  panelWindowHeight: 920,
 };
 
 // --- User settings (chrome.storage.local) ---
 export const SETTINGS_STORAGE_KEY = 'flow_automation_settings';
-export const SETTINGS_MIGRATION_VERSION = 8;
+export const SETTINGS_MIGRATION_VERSION = 9;
 export const MAX_CONCURRENT_PROMPTS = 6;
+
+/**
+ * Input Flow — mặc định CDP (chrome.debugger) như bản ổn định trước:
+ * - Gõ/click/phím qua CIT/CK/CC/CH
+ * - Debugger gắn sớm (CA) và giữ suốt phiên
+ */
+export const FLOW_INPUT_CONFIG = {
+  useNativeDomInput: false,
+  nativeTextInputOnly: false,
+  cdpFallback: true,
+  cdpTransient: false,
+  skipCaPreAttach: false,
+  disableRunZoom: false,
+  disablePageLoadZoom: false,
+  /** false = prompt/ảnh đầu chạy ngay khi Run; prompt tiếp theo vẫn chờ delay 45–90s */
+  noFirstPromptSkip: false,
+  cdpClickJitter: 0,
+  typeChunkChars: 12,
+  typeChunkDelayMs: 55,
+  unusualRetryBackoffSec: 60,
+};
 
 export const DEFAULT_SETTINGS = {
   migrationVersion: SETTINGS_MIGRATION_VERSION,
   defaultMode: 'textToVideo',
   aspectRatio: '16:9',
-  concurrentPrompts: 2,
+  concurrentPrompts: 1,
   outputCount: 1,
-  promptDelaySecondsMin: 20,
-  promptDelaySecondsMax: 45,
+  promptDelaySecondsMin: 45,
+  promptDelaySecondsMax: 90,
   model: 'Veo 3.1 - Lite',
   defaultVideoOption: '8s',
   defaultImageOption: 'new-image',
@@ -71,6 +99,11 @@ const SETTINGS_MIGRATIONS = {
       s.promptDelaySecondsMin = 20;
       s.promptDelaySecondsMax = 45;
     }
+  },
+  9: (s) => {
+    if ((s.concurrentPrompts ?? 1) > 1) s.concurrentPrompts = 1;
+    if ((s.promptDelaySecondsMin ?? 0) < 45) s.promptDelaySecondsMin = 45;
+    if ((s.promptDelaySecondsMax ?? 0) < 60) s.promptDelaySecondsMax = 90;
   },
 };
 

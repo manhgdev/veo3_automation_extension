@@ -63,6 +63,13 @@ export function usePromptGroups() {
             clearGroupProgress(data.id);
           }
           const merged = { ...prev, ...data };
+          if (data.delayPauseStartedAt !== undefined) {
+            merged.delayPauseStartedAt = data.delayPauseStartedAt;
+          } else if (data.isPaused && prev?.delayPauseStartedAt) {
+            merged.delayPauseStartedAt = prev.delayPauseStartedAt;
+          } else if (!data.isPaused) {
+            merged.delayPauseStartedAt = null;
+          }
           const ts = Date.now();
           if (data.promptDelayEndsAt !== undefined && data.promptDelayEndsAt !== null) {
             merged.promptDelayEndsAt = { ...data.promptDelayEndsAt };
@@ -181,6 +188,28 @@ export function usePromptGroups() {
             : detail,
           life: paused ? 0 : 10000,
         });
+        break;
+      }
+
+      case 'CONTENT_BLOCK_PROMPT': {
+        const { promptIndex, message: blockMsg, filename } = message.data ?? {};
+        if (!promptIndex) break;
+        toast.add({
+          severity: 'warn',
+          summary: t('controlTab.promptGroups.contentBlock.title'),
+          detail: t('controlTab.promptGroups.contentBlock.detail', {
+            promptIndex,
+            filename: filename || `prompt-${promptIndex}-CONTENT_BLOCK.txt`,
+          }),
+          life: 12000,
+        });
+        if (blockMsg) {
+          addEntry({
+            level: 'warn',
+            message: `Content Block — prompt #${promptIndex}: ${blockMsg}`,
+            timestamp: Date.now(),
+          });
+        }
         break;
       }
 

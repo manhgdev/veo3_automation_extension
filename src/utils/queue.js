@@ -126,15 +126,23 @@ export function getPromptDelayEndsAt(group, promptIndex) {
   return 0;
 }
 
+function getEffectiveDelayNow(group, now = Date.now()) {
+  if (group?.isPaused && group?.delayPauseStartedAt) {
+    return Number(group.delayPauseStartedAt);
+  }
+  return now;
+}
+
 export function isPromptInCooldown(group, promptIndex, now = Date.now()) {
   const endsAt = getPromptDelayEndsAt(group, promptIndex);
-  return endsAt > now;
+  return endsAt > getEffectiveDelayNow(group, now);
 }
 
 export function cooldownSecondsLeft(group, promptIndex, now = Date.now()) {
   const endsAt = getPromptDelayEndsAt(group, promptIndex);
-  if (!endsAt || endsAt <= now) return 0;
-  return Math.max(0, Math.ceil((endsAt - now) / 1000));
+  const effectiveNow = getEffectiveDelayNow(group, now);
+  if (!endsAt || endsAt <= effectiveNow) return 0;
+  return Math.max(0, Math.ceil((endsAt - effectiveNow) / 1000));
 }
 
 export function getPromptStatus(group, promptIndex, now = Date.now()) {

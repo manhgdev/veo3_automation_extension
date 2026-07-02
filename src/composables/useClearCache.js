@@ -3,6 +3,22 @@ import { i18n } from '@/i18n/index.js';
 import { usePanelToast } from './usePanelToast.js';
 import { sendRuntimeMessage } from '@/chrome/messaging.js';
 
+async function resolveFlowTabId() {
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (active?.id && active.url?.includes('labs.google')) return active.id;
+
+  try {
+    const response = await sendRuntimeMessage({ type: 'GET_FLOW_TAB_ID' });
+    if (response?.tabId) return response.tabId;
+  } catch {
+    // fall through
+  }
+
+  const tabs = await chrome.tabs.query({ url: ['https://labs.google/*'] });
+  const flowTab = tabs.find((tab) => /flow|\/fx\//i.test(tab.url || '')) ?? tabs[0];
+  return flowTab?.id ?? null;
+}
+
 export function useClearCache() {
   const t = (key, ...args) => i18n.global.t(key, ...args);
   const toast = usePanelToast();
@@ -11,10 +27,8 @@ export function useClearCache() {
   async function clearFlowCache() {
     if (isClearing.value) return;
 
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    const tab = tabs?.[0];
-
-    if (!tab?.id || !tab.url?.includes('labs.google')) {
+    const tabId = await resolveFlowTabId();
+    if (!tabId) {
       toast.add({
         severity: 'warn',
         summary: t('common.clearCache'),
@@ -26,9 +40,16 @@ export function useClearCache() {
 
     isClearing.value = true;
     try {
-      const response = await sendRuntimeMessage({ type: 'CS', tabId: tab.id });
+      const response = await sendRuntimeMessage({ type: 'CS', tabId });
       if (!response?.success) throw new Error(response?.error ?? 'Clear cache failed');
-      await chrome.tabs.reload(tab.id);
+      const reloadTabId = response.tabId ?? tabId;
+      await chrome.tabs.reload(reloadTabId);
+      toast.add({
+        severity: 'success',
+        summary: t('common.clearCache'),
+        detail: t('common.clearCacheSuccess'),
+        life: 4000,
+      });
     } catch (err) {
       toast.add({
         severity: 'error',

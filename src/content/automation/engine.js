@@ -3,13 +3,27 @@
  * Flow automation — source: src/content/automation/
  */
 import jQuery from 'jquery';
-import { getRemoteConfig, FALLBACK_FLOW_CONFIG, MAX_CONCURRENT_PROMPTS } from '@shared/config.js';
+import { getRemoteConfig, FALLBACK_FLOW_CONFIG, MAX_CONCURRENT_PROMPTS, FLOW_INPUT_CONFIG } from '@shared/config.js';
+import {
+  nativeFocusElement,
+  nativeClickElement,
+  nativeDispatchKey,
+  nativeClearEditable,
+  nativeInsertText,
+} from './dom-input.js';
 import { collectOrderedTileIds, assignTilesToPayloads } from './download-only.js';
 import { stripDownloadPayload } from '@/utils/downloadOnly.js';
 import {
   formatPromptPreview,
   extractPromptBodyFromTimedPrompt,
+  parsePromptHeaderLine,
+  buildDownloadFileStem,
 } from '@/utils/prompts.js';
+import {
+  formatTimelineTagForFilename,
+  parseVisualSuffix,
+  VISUAL_SUFFIX_RE,
+} from '@/utils/timeline.js';
 import { batchIdentityMatches } from '@/utils/batchIdentity.js';
 import {
   isModelQuotaMessage as veoIsModelQuotaMessage,
@@ -196,42 +210,73 @@ const l = __awaiter;
     veoFlowStepState = {
       chain: Promise.resolve()
     },
+    veoFlowAlertState = {
+      lastUnusualText: "",
+      lastUnusualAt: 0
+    },
     veoRunFlowStepExclusive = async e => {
         const t = veoFlowStepState.chain.then(() => e());
         return veoFlowStepState.chain = t.then(() => {}, () => {}), t
       },
-      veoClearPromptEditor = async () => {
-          try {
-            await h("a", "KeyA", 65, 2), await p(120), await h("Backspace", "Backspace", 8), await p(200)
-          } catch {}
-        },
-        f = async e => {
-          try {
-            const t = await chrome.runtime.sendMessage({
-              type: "CIT",
-              text: e
-            });
-            return !!t?.success
-          } catch {
-            return !1
-          }
-        }, h = async (e, t, n, r) => {
-          let o, a;
-          "@" === e && (o = "@", a = 8);
-          try {
-            const i = await chrome.runtime.sendMessage({
-              type: "CK",
-              key: e,
-              code: t,
-              keyCode: n,
-              text: o,
-              modifiers: void 0 !== r ? r : a
-            });
-            return !!i?.success
-          } catch {
-            return !1
-          }
-        }, g = async () => {
+    veoUseNativeInput = () => !!FLOW_INPUT_CONFIG.useNativeDomInput,
+    veoUseNativeTextInput = () => !!(FLOW_INPUT_CONFIG.nativeTextInputOnly || FLOW_INPUT_CONFIG.useNativeDomInput),
+    veoFlowBlockIsFatal = e => !!e && "model-switch" !== e && "unusual-retry" !== e && "paused" !== e,
+    veoActivePromptEditor = () => {
+      const active = document.activeElement;
+      if (active?.getAttribute?.("role") === "textbox" || active?.isContentEditable) return active;
+      const found = document.querySelector("div[role='textbox']");
+      return found || active
+    },
+    veoClearPromptEditor = async () => {
+      try {
+        if (veoUseNativeInput()) {
+          nativeClearEditable(veoActivePromptEditor());
+          return
+        }
+        await h("a", "KeyA", 65, 2), await p(120), await h("Backspace", "Backspace", 8), await p(200)
+      } catch {}
+    },
+    f = async e => {
+      if (veoUseNativeTextInput()) {
+        const nativeOk = await nativeInsertText(veoActivePromptEditor(), e, {
+          chunkChars: FLOW_INPUT_CONFIG.typeChunkChars,
+          chunkDelayMs: FLOW_INPUT_CONFIG.typeChunkDelayMs
+        });
+        if (nativeOk) return !0;
+        if (!FLOW_INPUT_CONFIG.cdpFallback) return !1
+      }
+      try {
+        const t = await chrome.runtime.sendMessage({
+          type: "CIT",
+          text: e
+        });
+        return !!t?.success
+      } catch {
+        return !1
+      }
+    }, h = async (e, t, n, r) => {
+      let o, a;
+      "@" === e && (o = "@", a = 8);
+      if (veoUseNativeInput()) {
+        const nativeOk = nativeDispatchKey(veoActivePromptEditor() || document.activeElement, e, t, n,
+          void 0 !== r ? r : a, o);
+        if (nativeOk) return !0;
+        if (!FLOW_INPUT_CONFIG.cdpFallback) return !1
+      }
+      try {
+        const i = await chrome.runtime.sendMessage({
+          type: "CK",
+          key: e,
+          code: t,
+          keyCode: n,
+          text: o,
+          modifiers: void 0 !== r ? r : a
+        });
+        return !!i?.success
+      } catch {
+        return !1
+      }
+    }, g = async () => {
           try {
             await chrome.runtime.sendMessage({
               type: "CD"
@@ -245,6 +290,13 @@ const l = __awaiter;
             if (y(t)) {
               const e = t.get(0);
               if (e) {
+                if (veoUseNativeInput()) {
+                  if (nativeFocusElement(e)) {
+                    await p(300);
+                    return
+                  }
+                  if (!FLOW_INPUT_CONFIG.cdpFallback) break
+                }
                 const t = e.getBoundingClientRect(),
                   n = Math.round(t.left + t.width / 2),
                   r = Math.round(t.top + t.height / 2);
@@ -271,10 +323,24 @@ const l = __awaiter;
           return "none" !== r.display && "hidden" !== r.visibility && "0" !== r.opacity && (n.top >= 0 && n
             .left >= 0 && n.bottom <= (window.innerHeight || document.documentElement.clientHeight) && (n
               .right, window.innerWidth || document.documentElement.clientWidth), !0)
+        }, veoIsFlowSurfaceNodeVisible = e => {
+          if (!e) return !1;
+          const t = e.getBoundingClientRect();
+          if (!t.width || !t.height) return !1;
+          const n = window.getComputedStyle(e);
+          return "none" !== n.display && "hidden" !== n.visibility && "0" !== n.opacity
+        }, veoDismissFlowAlerts = async () => {
+          try {
+            document.querySelectorAll('[data-sonner-toast] button, [role="alert"] button').forEach(e => {
+              const t = (e.getAttribute("aria-label") || e.textContent || "").toLowerCase();
+              /close|dismiss|đóng|huỷ|hủy/.test(t) && e.click()
+            }), await h("Escape", "Escape", 27), await p(300)
+          } catch {}
         }, veoDismissFlowOverlays = async e => {
           try {
             await h("Escape", "Escape", 27), await p(400)
           } catch {}
+          await veoDismissFlowAlerts();
           const t = i(e.downloadDoneButton);
           if (t.length && y(t)) try {
             await w(e.downloadDoneButton, "Close overlay", 4e3), await p(400)
@@ -295,7 +361,7 @@ const l = __awaiter;
             await p(n)
           }
           return null
-        }, w = async (e, t = "Undefined element button", n = 5e3, r = 100) => d.runExclusive(async () => {
+        }, w = async (e, t = "Undefined element button", n = 5e3, r = 100, reliable = !1) => d.runExclusive(async () => {
             const o = Date.now();
             for (; Date.now() - o < n;) {
               await p(r);
@@ -303,14 +369,23 @@ const l = __awaiter;
               if (y(t)) {
                 const e = t.get(0);
                 if (e) {
-                  const t = e.getBoundingClientRect(),
-                    n = Math.round(t.left + .25 * t.width),
-                    r = Math.round(t.top + t.height / 2);
-                  await chrome.runtime.sendMessage({
-                    type: "CC",
-                    x: n,
-                    y: r
-                  }), await p(300)
+                  let nativeClicked = !1;
+                  if (veoUseNativeInput()) {
+                    nativeClicked = nativeClickElement(e, .25, .5);
+                    if (nativeClicked) await p(300);
+                    if (nativeClicked && !reliable) return
+                  }
+                  if (!veoUseNativeInput() || reliable || !nativeClicked) {
+                    if (veoUseNativeInput() && !FLOW_INPUT_CONFIG.cdpFallback && !nativeClicked) break;
+                    const t = e.getBoundingClientRect(),
+                      n = Math.round(t.left + .25 * t.width),
+                      r = Math.round(t.top + t.height / 2);
+                    await chrome.runtime.sendMessage({
+                      type: "CC",
+                      x: n,
+                      y: r
+                    }), await p(300)
+                  }
                 }
                 return
               }
@@ -411,22 +486,12 @@ const l = __awaiter;
                 return null
               }
               var n
-            }, veoFormatTagForFilename = (tag) => {
-              const trimmed = (tag || "").trim();
-              const normalizeTime = (part) => (part || "").replace(/:/g, ".");
-              const rangePattern =
-                /^(\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\.\d+)?)\s*([–—-])\s*(\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\.\d+)?)$/;
-              const singleTimePattern = /^\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\.\d+)?$/;
-              const rangeMatch = trimmed.match(rangePattern);
-              if (rangeMatch) {
-                return `[${normalizeTime(rangeMatch[1])}${rangeMatch[2]}${normalizeTime(rangeMatch[3])}]`;
-              }
-              if (singleTimePattern.test(trimmed)) {
-                return `[${normalizeTime(trimmed)}]`;
-              }
-              return `[${trimmed}]`;
-            }, veoSanitizeDownloadStem = (stem) => (stem || "").replace(/:/g, ".").replace(
-              /[<>"/\\|?*\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim(), veoExplicitOutputFilenameRe =
+            }, veoFormatTagForFilename = (tag) => formatTimelineTagForFilename(tag), veoSanitizeDownloadStem = (stem) => {
+              let safe = String(stem || "").trim();
+              safe = safe.replace(/\s\|\s*[\s\S]*$/, "");
+              return safe.replace(/:/g, ".").replace(
+                /[<>"/\\|?*\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim()
+            }, veoExplicitOutputFilenameRe =
             /\.(jpg|jpeg|png|mp4|webp|gif|jfif)$/i,
             veoExtractExplicitOutputFilename = (prompt) => {
               const text = (prompt || "").trim().replace(/^\ufeff/, "");
@@ -471,6 +536,7 @@ const l = __awaiter;
             }, veoLooksLikePromptSlug = (token, hasExt) => {
               const slug = (token || "").trim();
               if (!slug) return !1;
+              if (VISUAL_SUFFIX_RE.test(slug)) return !1;
               if (hasExt) return !0;
               return slug.includes("_") && !/^Hand-drawn/i.test(slug);
             }, veoSplitSlugFromRest = (rest) => {
@@ -517,6 +583,18 @@ const l = __awaiter;
                 body: text
               };
             }, veoParseIndexedTagRest = (rest) => {
+              const visualMatch = (rest || "").match(
+                /^(?:_+)?(VISUAL_\d{2}_\d{2})(?:\s*(?:\|\s*)?([\s\S]*))?$/i
+              );
+              if (visualMatch) {
+                return {
+                  slugPart: null,
+                  slugExt: null,
+                  visualIndex: parseVisualSuffix(visualMatch[1])?.visualIndex ?? null,
+                  visualTotal: parseVisualSuffix(visualMatch[1])?.visualTotal ?? null,
+                  body: veoStripLeadingTimelineFromBody(veoNormalizePromptBodyAfterPrefix(visualMatch[2] ?? ""))
+                };
+              }
               const directSlugMatch = (rest || "").match(
                 /^_+([a-zA-Z0-9_-]+)(?:\.(jpg|jpeg|png|mp4|webp|gif|jfif))?(?:\r?\n\s*([\s\S]*)|\s+([\s\S]+)|([\s\S]*))$/i
               );
@@ -525,16 +603,37 @@ const l = __awaiter;
                 return {
                   slugPart: directSlugMatch[1],
                   slugExt: directSlugMatch[2]?.toLowerCase() ?? null,
+                  visualIndex: null,
+                  visualTotal: null,
                   body: veoStripLeadingTimelineFromBody(veoNormalizePromptBodyAfterPrefix(bodyAfter))
                 };
               }
-              return veoSplitSlugFromRest(rest);
+              const split = veoSplitSlugFromRest(rest);
+              return {
+                ...split,
+                visualIndex: null,
+                visualTotal: null
+              };
             }, veoNormalizePromptBodyAfterPrefix = (body) => {
               let text = (body || "").replace(/^_+\s*/, "").trim();
               text = text.replace(/^\s*\|\s*/, "").trim();
               return text
             }, veoParsePromptFilenamePrefix = (prompt) => {
               const text = veoStripExplicitOutputFilenameLine(prompt);
+              const firstLine = text.split(/\r?\n/)[0] ?? "";
+              const parsed = parsePromptHeaderLine(firstLine);
+              if (parsed && (parsed.indexPart || parsed.tagRaw || parsed.range)) {
+                const body = extractPromptBodyFromTimedPrompt(text) || parsed.body || text;
+                return {
+                  indexPart: parsed.indexPart,
+                  tagRaw: parsed.tagRaw,
+                  slugPart: parsed.slugPart,
+                  slugExt: parsed.slugExt,
+                  visualIndex: parsed.visualIndex,
+                  visualTotal: parsed.visualTotal,
+                  body
+                };
+              }
               const indexedTagMatch = text.match(/^(\d{3})_\[([^\]]+)\]\s*([\s\S]*)$/);
               if (indexedTagMatch) {
                 const split = veoParseIndexedTagRest(indexedTagMatch[3]);
@@ -543,6 +642,8 @@ const l = __awaiter;
                   tagRaw: indexedTagMatch[2],
                   slugPart: split.slugPart,
                   slugExt: split.slugExt,
+                  visualIndex: split.visualIndex,
+                  visualTotal: split.visualTotal,
                   body: split.body
                 };
               }
@@ -553,6 +654,8 @@ const l = __awaiter;
                   tagRaw: tagMatch[1],
                   slugPart: null,
                   slugExt: null,
+                  visualIndex: null,
+                  visualTotal: null,
                   body: veoStripLeadingTimelineFromBody(veoNormalizePromptBodyAfterPrefix(tagMatch[2]))
                 };
               }
@@ -561,6 +664,8 @@ const l = __awaiter;
                 tagRaw: null,
                 slugPart: null,
                 slugExt: null,
+                visualIndex: null,
+                visualTotal: null,
                 body: text
               };
             }, veoExtractPromptTag = (prompt) => {
@@ -582,17 +687,32 @@ const l = __awaiter;
             }, veoBuildOutputFileStem = (promptIndex, prompt) => {
               const explicit = veoExtractExplicitOutputFilename(prompt);
               if (explicit) return explicit.stem;
-              const { indexPart } = veoParsePromptFilenamePrefix(prompt);
+              const labeled = buildDownloadFileStem(prompt, {
+                promptIndex
+              });
+              if (labeled) return veoSanitizeDownloadStem(labeled);
+              const {
+                indexPart,
+                tagRaw,
+                slugPart
+              } = veoParsePromptFilenamePrefix(prompt);
               const indexPartFinal = indexPart || String(promptIndex).padStart(3, "0");
               const tagPart = veoExtractPromptTag(prompt);
               const snippetPart = veoSanitizeFileNamePart(veoExtractPromptSnippet(prompt));
               const joined = tagPart ? `${indexPartFinal}_${tagPart}_${snippetPart}` :
+                slugPart ? `${indexPartFinal}_${tagPart || ""}_${slugPart}`.replace(/_+/g, "_").replace(/^_|_$/g, "") :
                 `${indexPartFinal}_${snippetPart}`;
               return veoSanitizeDownloadStem(joined);
             }, veoBuildOutputFileStemWithVariant = (promptIndex, prompt, variantIndex, variantCount) => {
               const explicit = veoExtractExplicitOutputFilename(prompt);
               if (explicit) return variantCount > 1 ? `${explicit.stem}_${variantIndex + 1}` :
                 explicit.stem;
+              const labeled = buildDownloadFileStem(prompt, {
+                promptIndex,
+                variantIndex,
+                variantCount
+              });
+              if (labeled) return veoSanitizeDownloadStem(labeled);
               const stem = veoBuildOutputFileStem(promptIndex, prompt);
               return variantCount > 1 ? `${stem}_${variantIndex + 1}` : stem;
             }, veoGetOutputFileExtension = (prompt, isVideo) => {
@@ -661,6 +781,7 @@ const l = __awaiter;
                   error: "Cancelled"
                 };
                 await (async () => {
+                  if (FLOW_INPUT_CONFIG.skipCaPreAttach) return;
                   try {
                     await chrome.runtime.sendMessage({
                       type: "CA"
@@ -836,6 +957,12 @@ const l = __awaiter;
                     error: tileResult.error,
                     cancelled: !0
                   }
+                }
+                if (tileResult.unusualRetry) return {
+                  success: !1,
+                  steps: r,
+                  unusualRetry: !0,
+                  error: tileResult.error
                 }
                 return tileResult.success ? (r[3].status = "completed", {
                   success: !0,
@@ -1242,6 +1369,12 @@ const l = __awaiter;
           })(e.characters, t), await f(promptText))
         }
         S(`✍️  Filled prompt: ${e.prompt.substring(0,50)}...`), await p(1200, !0);
+        try {
+          const editor = veoActivePromptEditor();
+          editor?.dispatchEvent?.(new Event("input", {
+            bubbles: !0
+          }))
+        } catch {}
         e.knownTileIdsBeforeSubmit = new Set(Ce(n)), S(
           `📸 Snapshot ${e.knownTileIdsBeforeSubmit.size} tile(s) before submit`);
         await veoDismissFlowOverlays(n);
@@ -1249,9 +1382,15 @@ const l = __awaiter;
         if (!o || 0 === o.length) return A(
           "Could not find submit button — kiểm tra prompt/ảnh đã sẵn sàng chưa"), !1;
         try {
-          await w(n.submitButton, "Submit button", 8e3)
+          await w(n.submitButton, "Submit button", 8e3, 100, !0)
         } catch {
           S("⚠️ Click submit failed, trying Enter..."), await h("Enter", "Enter", 13)
+        }
+        await p(800, !0);
+        if (y(i(n.submitButton))) {
+          S("⚠️ Submit not started, retry Enter...");
+          await h("Enter", "Enter", 13);
+          await p(500)
         }
         if (e.outputPreviousPrompt?.tileIds && e.outputPreviousPrompt.tileIds.length > 0) {
           const e = i(n.downloadDoneButton);
@@ -1316,7 +1455,12 @@ const l = __awaiter;
               tileIds: [],
               modelSwitch: !0
             };
-            if (blockResult) return {
+            if ("unusual-retry" === blockResult) return {
+              success: !1,
+              tileIds: [],
+              unusualRetry: !0
+            };
+            if (veoFlowBlockIsFatal(blockResult)) return {
               success: !1,
               tileIds: [],
               fatal: !0,
@@ -1428,7 +1572,14 @@ const l = __awaiter;
         error: message,
         modelSwitch: !0
       };
-      if (blockResult) return veoReportPromptProgress(job, progressPct, "error"), {
+      if ("unusual-retry" === blockResult) return veoReportPromptProgress(job, progressPct, "error"), {
+        success: !1,
+        resourceElements: [],
+        tileIdsError: tileIdsError || [],
+        unusualRetry: !0,
+        error: message
+      };
+      if (veoFlowBlockIsFatal(blockResult)) return veoReportPromptProgress(job, progressPct, "error"), {
         success: !1,
         resourceElements: [],
         tileIdsError: tileIdsError || [],
@@ -1467,7 +1618,13 @@ const l = __awaiter;
               tileIdsError: [],
               modelSwitch: !0
             };
-            if (blockResult) return {
+            if ("unusual-retry" === blockResult) return {
+              success: !1,
+              resourceElements: [],
+              tileIdsError: [],
+              unusualRetry: !0
+            };
+            if (veoFlowBlockIsFatal(blockResult)) return {
               success: !1,
               resourceElements: [],
               tileIdsError: [],
@@ -1510,6 +1667,7 @@ const l = __awaiter;
               jobGroup = Z.find(e => e.id === t.groupId),
               blocked = jobGroup && veoHandlePromptFlowBlockError(jobGroup, s, t, m, h, re);
             if (blocked) return blocked;
+            if (veoIsContentBlockMessage(s)) return await veoFinishContentBlockPromptError(t, s, m, h);
             return veoReportPromptProgress(t, m, "error"), {
               success: !1,
               resourceElements: [],
@@ -1522,6 +1680,8 @@ const l = __awaiter;
             const e = Z.find(e => e.id === t.groupId),
               blocked = e && veoHandlePromptFlowBlockError(e, flowPromptErr, t, m, h, re);
             if (blocked) return blocked;
+            if (veoIsContentBlockMessage(flowPromptErr)) return await veoFinishContentBlockPromptError(t,
+              flowPromptErr, m, h);
             return veoReportPromptProgress(t, m, "error"), {
               success: !1,
               resourceElements: [],
@@ -1578,6 +1738,15 @@ const l = __awaiter;
           success: !1,
           modelSwitch: !0,
           error: c.error
+        } : c.unusualRetry ? {
+          success: !1,
+          unusualRetry: !0,
+          error: c.error
+        } : c.contentBlock ? {
+          success: !1,
+          contentBlock: !0,
+          skipRetry: !0,
+          error: c.error
         } : c.fatal ? {
           success: !1,
           fatal: !0,
@@ -1598,7 +1767,11 @@ const l = __awaiter;
               success: !1,
               modelSwitch: !0
             };
-            if (blockResult) return {
+            if ("unusual-retry" === blockResult) return {
+              success: !1,
+              unusualRetry: !0
+            };
+            if (veoFlowBlockIsFatal(blockResult)) return {
               success: !1,
               fatal: !0,
               error: e.errorMessage || e.fatalError
@@ -2090,7 +2263,7 @@ const l = __awaiter;
     veoEffectiveConcurrent = e => Math.min(MAX_CONCURRENT_PROMPTS, Math.max(1, Number(e) || 1)),
     veoSyncDelayLegacyFields = e => {
       const map = e.promptDelayEndsAt ?? {},
-        now = Date.now();
+        now = e.isPaused && e.delayPauseStartedAt ? Number(e.delayPauseStartedAt) : Date.now();
       let bestIdx, bestEnd = 0;
       for (const [k, v] of Object.entries(map)) {
         const end = Number(v);
@@ -2177,7 +2350,7 @@ const l = __awaiter;
         const releasePick = await veoAcquireDelayPickLock(e);
         let waitSec, endsAt;
         try {
-          if (!e._firstPromptCooldownUsed && !(e.processedCount || 0) && !(e.activeGenerationCount || 0)) {
+          if (!FLOW_INPUT_CONFIG.noFirstPromptSkip && !e._firstPromptCooldownUsed && !(e.processedCount || 0) && !(e.activeGenerationCount || 0)) {
             e._firstPromptCooldownUsed = !0;
             return veoClearPromptDelay(e, promptIndex, t), e.lastGenerationStartedAt = Date.now(), !e
               .isCancelling
@@ -2196,17 +2369,34 @@ const l = __awaiter;
         const tick = () => {
           e.promptDelayEndsAt[promptIndex] = endsAt, veoSyncDelayLegacyFields(e), t(e)
         };
-        for (; Date.now() < endsAt;) {
+        for (;;) {
           if (e.isCancelling) return veoClearPromptDelay(e, promptIndex, t), !1;
           if (e.isPaused) {
             const pauseStart = Date.now();
             for (; e.isPaused && !e.isCancelling;) await z(500);
             if (e.isCancelling) return veoClearPromptDelay(e, promptIndex, t), !1;
-            endsAt += Date.now() - pauseStart, e.promptDelayEndsAt[promptIndex] = endsAt
+            endsAt += Date.now() - pauseStart, e.promptDelayEndsAt[promptIndex] = endsAt, tick()
           }
-          await z(250), tick()
+          const remaining = endsAt - Date.now();
+          if (remaining <= 0) break;
+          await z(Math.min(250, remaining)), tick()
         }
         return veoClearPromptDelay(e, promptIndex, t), e.lastGenerationStartedAt = Date.now(), !0
+      },
+    veoWaitUnusualCooldown = async (e, t) => {
+        const until = e.unusualCooldownUntil;
+        if (!until || Date.now() >= until) return !e.isCancelling;
+        for (S(`⏳ Chờ sau hoạt động bất thường (${Math.ceil((until - Date.now()) / 1e3)}s)...`);;) {
+          if (e.isCancelling) return !1;
+          if (e.isPaused) {
+            await z(500);
+            continue
+          }
+          const remaining = until - Date.now();
+          if (remaining <= 0) break;
+          e.delayRemainingSeconds = Math.ceil(remaining / 1e3), t?.(e), await z(Math.min(500, remaining))
+        }
+        return e.unusualCooldownUntil = 0, e.delayRemainingSeconds = 0, t?.(e), !e.isCancelling
       },
       veoFlowQuotaPatterns = [/quota\s*(?:limit|exceeded|reached)/i, /exceeds?\s+(?:the\s+)?quota/i,
         /error\s*(?:code\s*)?253/i, /out of (?:google flow )?credits/i, /not enough (?:google flow )?credits/i,
@@ -2219,12 +2409,20 @@ const l = __awaiter;
         /cr[eé]dits? (?:insuffisants|[eé]puis[eé]s)/i, /kontingent/i, /guthaben.*(?:aufgebraucht|erschöpft)/i,
         /配额|额度|积分.*(?:不足|用完|耗尽)/, /信用.*不足/, /할당량|크레딧.*(?:부족|소진)/, /한도.*초과/, /クレジット.*(?:不足|切れ)/, /上限.*超過/
       ],
-      veoFlowUnusualPatterns = [/unusual\s+activit/i, /suspicious\s+activit/i, /bất thường/i, /hoạt động bất thường/i,
-        /activit[eé].*inhabituelle/i, /aktivit[aä]t.*ungewöhnlich/i, /异常活动/, /異常なアクティビティ/
+      veoFlowUnusualPatterns = [/unusual\s+activit/i, /suspicious\s+activit/i, /hoạt động bất thường/i,
+        /phát hiện.*hoạt động bất thường/i, /detect(?:ed)?\s+unusual/i, /activit[eé].*inhabituelle/i,
+        /aktivit[aä]t.*ungewöhnlich/i, /异常活动/, /異常なアクティビティ/
       ],
       veoFlowGeneralFailPatterns = [/không thành công/i, /generation failed/i, /failed to generate/i,
         /policy|vi phạm|violated/i, /something went wrong/i, /could not generate/i, /unable to generate/i,
         /génération.*échoué/i, /generación fallida/i, /生成失败/, /生成に失敗/
+      ],
+      veoFlowContentBlockPatterns = [/content\s*block/i, /blocked\s+(?:by|due to|for)\s+(?:content|policy|safety)/i,
+        /policy\s*violation/i, /safety\s*(?:filter|policy|violation)/i,
+        /violat(?:e|es|ed|ing)\s+(?:our\s+)?(?:content\s+)?polic/i, /doesn'?t comply with/i,
+        /not allowed.*(?:content|policy|generate)/i, /cannot generate.*(?:content|policy)/i,
+        /nội dung.*(?:vi phạm|bị chặn|không được phép)/i, /vi phạm.*(?:chính sách|nội dung)/i,
+        /bị chặn.*nội dung/i, /chính sách.*nội dung/i, /敏感内容|内容违规|违反.*政策|内容.*被.*阻止/
       ],
       veoFlowFailPatterns = [...veoFlowQuotaPatterns, ...veoFlowUnusualPatterns, ...veoFlowGeneralFailPatterns],
       veoFlowTextMatchesAny = (text, patterns) => {
@@ -2233,6 +2431,12 @@ const l = __awaiter;
       },
       veoIsQuotaLimitMessage = (message) => veoFlowTextMatchesAny(message, veoFlowQuotaPatterns) && !veoIsModelQuotaMessage(message),
       veoIsUnusualActivityMessage = (message) => veoFlowTextMatchesAny(message, veoFlowUnusualPatterns),
+      veoIsContentBlockMessage = (message) => {
+        if (!message) return !1;
+        if (veoIsModelQuotaMessage(message) || veoFlowTextMatchesAny(message, veoFlowQuotaPatterns) ||
+          veoIsUnusualActivityMessage(message)) return !1;
+        return veoFlowTextMatchesAny(message, veoFlowContentBlockPatterns)
+      },
       veoFlowLooksFailed = (message) => veoFlowTextMatchesAny(message, veoFlowFailPatterns),
       veoFlowFallbackLang = () => {
         const lang = (document.documentElement.lang || navigator.language || "en").toLowerCase();
@@ -2275,6 +2479,7 @@ const l = __awaiter;
         try {
           document.querySelectorAll('[role="alert"], [data-sonner-toast], [data-state="open"][role="alertdialog"]')
             .forEach((node) => {
+              if (!veoIsFlowSurfaceNodeVisible(node)) return;
               combined += " " + (node.textContent || "");
             });
         } catch {}
@@ -2318,7 +2523,10 @@ const l = __awaiter;
           const surfaceText = veoCollectFlowSurfaceText();
           if (!surfaceText || !veoIsUnusualActivityMessage(surfaceText) || veoIsQuotaLimitMessage(surfaceText))
           return null;
-          return veoExtractFlowFailMessage(surfaceText, veoFlowFallbackMsg("unusual"));
+          const msg = veoExtractFlowFailMessage(surfaceText, veoFlowFallbackMsg("unusual"));
+          const now = Date.now();
+          if (msg === veoFlowAlertState.lastUnusualText && now - veoFlowAlertState.lastUnusualAt < 12e4) return null;
+          return msg
         } catch {}
         return null;
       },
@@ -2402,6 +2610,53 @@ const l = __awaiter;
           }).catch(() => {});
         } catch {}
       },
+      veoReportContentBlockPrompt = async (job, flowMessage) => {
+        const promptIndex = job.promptIndex ?? 1;
+        const groupId = job.groupId ?? "";
+        const jobGroup = Z.find(e => e.id === groupId);
+        jobGroup && (jobGroup.contentBlockReportedIndexes = jobGroup.contentBlockReportedIndexes || new Set);
+        const reported = jobGroup?.contentBlockReportedIndexes;
+        const indexKey = Math.max(0, promptIndex - 1);
+        if (reported?.has(indexKey)) return;
+        reported?.add(indexKey);
+        const stem = veoBuildOutputFileStem(promptIndex, job.prompt) || String(promptIndex).padStart(3, "0");
+        const filename = `${stem}_CONTENT_BLOCK.txt`;
+        const folder = (job.folderName || "").trim();
+        const reportBody = String(job.prompt ?? "");
+        try {
+          const dl = await chrome.runtime.sendMessage({
+            type: "DOWNLOAD_TEXT_BLOB",
+            content: reportBody,
+            filename,
+            folder
+          });
+          const savedPath = dl?.filename || (folder ? `${folder}/${filename}` : filename);
+          A(`🚫 Content Block — prompt ${promptIndex}. Đã tải báo lỗi: ${savedPath}`);
+          chrome.runtime.sendMessage({
+            type: "CONTENT_BLOCK_PROMPT",
+            data: {
+              groupId,
+              promptIndex,
+              message: flowMessage,
+              filename: savedPath
+            }
+          }).catch(() => {})
+        } catch (e) {
+          D("Content Block report download failed:", e)
+        }
+      },
+      veoFinishContentBlockPromptError = async (job, flowMessage, progressPct, tileIdsError) => {
+        await veoReportContentBlockPrompt(job, flowMessage);
+        veoReportPromptProgress(job, progressPct, "error");
+        return {
+          success: !1,
+          resourceElements: [],
+          tileIdsError: tileIdsError || [],
+          error: flowMessage,
+          contentBlock: !0,
+          skipRetry: !0
+        }
+      },
       veoPauseJobOnQuota = (jobGroup, message, onUpdate, opts) => {
         if (!jobGroup || jobGroup.isCancelling) return null;
         const pauseMessage = (message || veoDetectFlowQuotaError() || veoFlowFallbackMsg("quota")).trim();
@@ -2476,6 +2731,9 @@ const l = __awaiter;
 
         jobGroup.currentPromptIndex = void 0;
         if (jobGroup.errorMessage && veoIsUnusualActivityMessage(jobGroup.errorMessage)) jobGroup.errorMessage = "";
+        const backoffBase = FLOW_INPUT_CONFIG.unusualRetryBackoffSec ?? 60;
+        const backoffSec = Math.min(300, backoffBase + Math.max(0, (jobGroup.unusualActivityCount || 1) - 1) * 30);
+        jobGroup.unusualCooldownUntil = Date.now() + backoffSec * 1e3;
         try {
           chrome.runtime.sendMessage({
             type: "UNUSUAL_ACTIVITY",
@@ -2493,6 +2751,7 @@ const l = __awaiter;
           jobGroup.isPaused = !0;
           jobGroup.status = "paused";
           jobGroup.pauseReason = "unusual";
+          jobGroup.delayPauseStartedAt = jobGroup.delayPauseStartedAt || Date.now();
           jobGroup.errorMessage = "";
           S(`⏸️ Tạm dừng group ${jobGroup.id} (hoạt động bất thường): ${unusualMessage}`);
           D(`⏸️ Tạm dừng group (unusual activity): ${unusualMessage}`);
@@ -2501,6 +2760,9 @@ const l = __awaiter;
 
         // soft-block: keep running, retry later
         S(`🔁 Unusual activity (${jobGroup.unusualActivityCount}/${MAX_CONSEC_UNUSUAL}) — sẽ thử lại prompt...`);
+        veoFlowAlertState.lastUnusualText = unusualMessage;
+        veoFlowAlertState.lastUnusualAt = now;
+        void veoDismissFlowAlerts();
         return "unusual-retry";
       },
       veoResetUnusualActivityState = (jobGroup) => {
@@ -2678,6 +2940,10 @@ const l = __awaiter;
           const handled = veoHandleUnusualActivity(jobGroup, blockMessage, onUpdate, opts);
           if (handled) return handled;
         }
+        if (veoIsContentBlockMessage(blockMessage)) {
+          S("⏭️ Content Block trên giao diện — bỏ qua, không dừng cả queue");
+          return null;
+        }
         return veoFlowTextMatchesAny(blockMessage, veoFlowQuotaPatterns) ? veoPauseJobOnQuota(jobGroup,
           blockMessage, onUpdate, opts) : veoAbortJobOnFatal(jobGroup, blockMessage, onUpdate);
       },
@@ -2685,7 +2951,8 @@ const l = __awaiter;
         if (!jobGroup || jobGroup.isCancelling) return null;
         const fatalMessage = message != null ? message : veoDetectFlowFatalError();
         if (!fatalMessage || veoFlowTextMatchesAny(fatalMessage, veoFlowQuotaPatterns) || veoIsModelQuotaMessage(
-            fatalMessage) || veoIsUnusualActivityMessage(fatalMessage)) return null;
+            fatalMessage) || veoIsUnusualActivityMessage(fatalMessage) || veoIsContentBlockMessage(
+            fatalMessage)) return null;
         jobGroup.isCancelling = !0;
         jobGroup.fatalError = fatalMessage;
         jobGroup.errorMessage = fatalMessage;
@@ -2737,7 +3004,12 @@ const l = __awaiter;
           model: e.payloads[i]?.model ?? a.model
         },
         c = s.promptIndex;
+      if (!(await veoWaitUnusualCooldown(e, r))) return;
       if (!(await veoWaitGenerationCooldown(e, r, i))) return;
+      if (e.isPaused) {
+        e.pendingIndexes.includes(i) || e.pendingIndexes.unshift(i);
+        continue
+      }
       e.activeGenerationCount = (e.activeGenerationCount || 0) + 1;
       try {
         const o = e.retryCountByIndex[i] || 0,
@@ -2750,12 +3022,17 @@ const l = __awaiter;
             e, u.error, r, {
               requeueIndex: i
             })) continue;
+        if (u.unusualRetry) {
+          r(e);
+          continue
+        }
         if ((u.fatal || u.error && (veoFlowTextMatchesAny(u.error, veoFlowQuotaPatterns) || veoIsModelQuotaMessage(u
             .error))) && veoHandleFlowBlockError(e, u.error, r, {
             requeueIndex: i
           })) return;
         if (!u.success && !u.cancelled) {
-          if (o < maxRetries) {
+          const isContentBlock = u.contentBlock || u.skipRetry || veoIsContentBlockMessage(u.error);
+          if (!isContentBlock && o < maxRetries) {
             e.retryCountByIndex[i] = o + 1, e.pendingIndexes.includes(i) || e.pendingIndexes.unshift(i),
               r(e);
             continue
@@ -2769,6 +3046,7 @@ const l = __awaiter;
             tileIds: u.success && u.tileIds?.length ? u.tileIds.slice(0, Math.max(1, Number(a.outputCount) || 1)) : void 0,
             steps: u.steps,
             error: u.error,
+            contentBlock: !!(u.contentBlock || veoIsContentBlockMessage(u.error)),
             cancelled: !!e.isCancelling
           }), u.success && u.tileIds && u.tileIds.length > 0) {
           const t = (e.downloadRetryCountByIndex || {})[i] || 0;
@@ -2872,6 +3150,17 @@ const l = __awaiter;
           }
         }
         Q(n, e.id, Z, re)
+      } else if (o.contentBlock) {
+        const idx = veoResultIndex(n);
+        const s = Z.find(t => t.id === e.id);
+        s && (s.results = s.results.filter(e => e.index !== idx), s.results.push({
+          index: idx,
+          promptIndex: n.config?.promptIndex ?? idx + 1,
+          success: !1,
+          downloadComplete: !0,
+          error: o.error || "Content blocked",
+          contentBlock: !0
+        }), s.completedPromptIndexes.add(idx), fe(s, ee), re(s))
       } else if (o.modelSwitch) {
         const idx = veoResultIndex(n);
         veoRequeuePromptForModelSwitch(r, idx);
@@ -2888,6 +3177,7 @@ const l = __awaiter;
     ee = [];
   let te = null;
   const ne = e => {
+      if (FLOW_INPUT_CONFIG.disableRunZoom && 1 !== e) return;
       try {
         chrome.runtime.sendMessage({
           type: "SET_ZOOM",
@@ -2915,6 +3205,7 @@ const l = __awaiter;
             delayPromptIndex: e.delayPromptIndex ?? null,
             delayEndsAt: e.delayEndsAt ?? null,
             delayTotalSeconds: e.delayTotalSeconds ?? null,
+            delayPauseStartedAt: e.delayPauseStartedAt ?? null,
             promptDelayEndsAt: {
               ...(e.promptDelayEndsAt ?? {})
             },
@@ -2927,7 +3218,8 @@ const l = __awaiter;
               success: e.success,
               downloadComplete: e.downloadComplete,
               tileIds: Array.isArray(e.tileIds) ? e.tileIds : void 0,
-              error: e.error
+              error: e.error,
+              contentBlock: !!e.contentBlock
             })),
             currentPromptIndex: e.currentPromptIndex,
             promptPreviews: (e.payloads || []).map(e => formatPromptPreview(e?.prompt)),
@@ -3179,7 +3471,7 @@ const l = __awaiter;
       type: "CONTENT_SCRIPT_RESET"
     }).catch(() => {})
   } catch {}
-  self.onerror = function(e, t, n, r, o) {}, window.location.href.includes("labs.google") && chrome.runtime
+  self.onerror = function(e, t, n, r, o) {}, !FLOW_INPUT_CONFIG.disablePageLoadZoom && window.location.href.includes("labs.google") && chrome.runtime
   .sendMessage({
     type: "SET_ZOOM",
     zoomFactor: .8
@@ -3449,8 +3741,8 @@ const l = __awaiter;
             error: "Prompt group not found"
           };
           const n = Z[t];
-          return "running" === n.status || "queued" === n.status ? (n.isPaused = !0, n.status = "paused", re(
-            n), {
+          return "running" === n.status || "queued" === n.status ? (n.isPaused = !0, n.status = "paused", n
+            .delayPauseStartedAt = n.delayPauseStartedAt || Date.now(), re(n), {
             success: !0,
             paused: !0
           }) : "paused" === n.status ? {
@@ -3508,7 +3800,8 @@ const l = __awaiter;
           } catch {}
           veoResetUnusualActivityState(n);
           veoResetModelQuotaResumeState(n);
-          return n.pendingModelSwitch = !1, n.isPaused = !1, n.status = "running", n.currentPromptIndex = void 0, re(n), {
+          return n.pendingModelSwitch = !1, n.isPaused = !1, n.delayPauseStartedAt = void 0, n.status = "running", n
+            .currentPromptIndex = void 0, re(n), {
             success: !0,
             resumed: !0,
             groupId: n.id

@@ -36,7 +36,7 @@ const PROMPT_INDEXED_LINE_TIPS = {
   ar: 'افصل المطالبات بسطر فارغ، أو سطرًا لكل مطالبة: 001_[00.00-00.02]_name.jpg | نص المطالبة',
   bn: 'প্রম্পট আলাদা করতে খালি লাইন দিন, অথবা প্রতি লাইনে: 001_[00.00-00.02]_name.jpg | প্রম্পট',
   de: 'Prompts mit Leerzeile trennen oder pro Zeile: 001_[00.00-00.02]_name.jpg | Prompt-Text',
-  en: 'One SRT line per prompt (blank lines between entries are OK): 001_[00.00-00.08]_filename.jpg | full prompt text',
+  en: 'One prompt per line — SRT or indexed timeline OK: 001_[00:00.000-00:09.000]_VISUAL_01_03 | full prompt text',
   es: 'Separa prompts con línea en blanco, o una línea cada uno: 001_[00.00-00.02]_nombre.jpg | texto del prompt',
   fr: 'Séparez les prompts par une ligne vide, ou une ligne chacun : 001_[00.00-00.02]_nom.jpg | texte du prompt',
   hi: 'प्रॉम्प्ट को खाली पंक्ति से अलग करें, या प्रति पंक्ति: 001_[00.00-00.02]_name.jpg | प्रॉम्प्ट',
@@ -51,7 +51,7 @@ const PROMPT_INDEXED_LINE_TIPS = {
   tl: 'Paghiwalayin ang prompt sa blank line, o isang linya bawat isa: 001_[00.00-00.02]_name.jpg | teksto ng prompt',
   tr: 'Promptları boş satırla ayırın veya her satırda bir tane: 001_[00.00-00.02]_name.jpg | prompt metni',
   ur: 'پرامپٹس کو خالی لائن سے الگ کریں، یا ہر لائن: 001_[00.00-00.02]_name.jpg | پرامپٹ متن',
-  vi: 'Mỗi prompt một dòng SRT (có thể để trống giữa các dòng): 001_[00.00-00.08]_ten_file.jpg | nội dung prompt đầy đủ',
+  vi: 'Mỗi prompt một dòng — SRT hoặc timeline có STT: 001_[00:00.000-00:09.000]_VISUAL_01_03 | nội dung prompt',
   zh: '用空行分隔提示词，或每行一条：001_[00.00-00.02]_name.jpg | 提示词内容',
 };
 
@@ -85,6 +85,10 @@ function promptGroupsOverlay(redownload, promptRange = PROMPT_RANGE_KEYS, modelQ
     unusualActivity: {
       title: 'Unusual activity (Flow)',
       pausedTitle: 'Paused — unusual activity',
+    },
+    contentBlock: {
+      title: 'Content blocked (Flow)',
+      detail: 'Prompt #{promptIndex} was blocked. Error report downloaded: {filename}',
     },
   };
 }
@@ -199,6 +203,7 @@ export default {
       appearance: 'Appearance',
       promptModeApplyAll: 'Apply to all',
       promptModeApply: 'Apply',
+      clearCacheSuccess: 'Cache cleared — Flow tab reloaded.',
     },
     controlTab: {
       folderName: {
@@ -674,6 +679,7 @@ export default {
       appearance: 'Giao diện',
       promptModeApplyAll: 'Áp dụng tất cả',
       promptModeApply: 'Áp dụng',
+      clearCacheSuccess: 'Đã xóa cache — trang Flow đang tải lại.',
     },
     controlTab: {
       folderName: {
@@ -699,6 +705,10 @@ export default {
         unusualActivity: {
           title: 'Hoạt động bất thường (Flow)',
           pausedTitle: 'Tạm dừng — hoạt động bất thường',
+        },
+        contentBlock: {
+          title: 'Content Block (Flow)',
+          detail: 'Prompt #{promptIndex} bị chặn. Đã tải file báo lỗi: {filename}',
         },
       },
     },

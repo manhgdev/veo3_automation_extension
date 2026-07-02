@@ -22,6 +22,7 @@ export const VIDEO_MODELS = [
 export const IMAGE_MODELS = [
   { label: '🍌 Nano Banana Pro', value: '🍌 Nano Banana Pro' },
   { label: '🍌 Nano Banana 2', value: '🍌 Nano Banana 2' },
+  { label: '🍌 Nano Banana 2 Lite', value: '🍌 Nano Banana 2 Lite' },
   { label: 'Imagen 4', value: 'Imagen 4' },
 ];
 

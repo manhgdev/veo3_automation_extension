@@ -5,7 +5,11 @@ export const VIDEO_MODEL_CHAIN = VIDEO_MODELS.map((m) => m.value);
 
 const MODEL_NAME_ALIASES = [
   { value: '🍌 Nano Banana Pro', patterns: [/nano banana pro/i, /🍌\s*nano banana pro/i] },
-  { value: '🍌 Nano Banana 2', patterns: [/nano banana 2/i, /🍌\s*nano banana 2/i] },
+  {
+    value: '🍌 Nano Banana 2 Lite',
+    patterns: [/nano banana 2\s*lite/i, /🍌\s*nano banana 2\s*lite/i],
+  },
+  { value: '🍌 Nano Banana 2', patterns: [/nano banana 2(?!\s*lite)/i, /🍌\s*nano banana 2(?!\s*lite)/i] },
   { value: 'Imagen 4', patterns: [/imagen\s*4/i] },
   { value: 'Veo 3.1 - Quality', patterns: [/veo\s*3\.1\s*[-–]?\s*quality/i] },
   { value: 'Veo 3.1 - Fast', patterns: [/veo\s*3\.1\s*[-–]?\s*fast/i] },
@@ -188,7 +192,7 @@ export function pickNextModel(currentModel, chain, exhausted = new Set()) {
   return null;
 }
 
-/** Pro / NB2 luôn fallback; Imagen 4 chỉ khi acc đã xác nhận có trong menu. */
+/** Pro / NB2 / NB2 Lite luôn fallback; Imagen 4 chỉ khi acc đã xác nhận có trong menu. */
 export function pickNextModelAfterQuota(currentModel, chain, exhausted, hasImagen4) {
   const next = pickNextModel(currentModel, chain, exhausted);
   if (!next || next === IMAGEN_4_MODEL && hasImagen4 !== true) return null;
