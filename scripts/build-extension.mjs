@@ -21,6 +21,49 @@ function cp(src, dest) {
   fs.cpSync(src, dest, { recursive: true });
 }
 
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function writeJson(filePath, data) {
+  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+}
+
+function bumpPatchVersion(version) {
+  const match = /^([0-9]+)\.([0-9]+)\.([0-9]+)(.*)$/.exec(version);
+  if (!match) {
+    throw new Error(`Unsupported version format: ${version}`);
+  }
+
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]) + 1;
+  return `${major}.${minor}.${patch}${match[4]}`;
+}
+
+function bumpProjectVersion() {
+  const manifestPath = path.join(root, 'manifest.json');
+  const packagePath = path.join(root, 'package.json');
+
+  const manifest = readJson(manifestPath);
+  const currentVersion = manifest.version;
+  if (!currentVersion) {
+    throw new Error('manifest.json is missing "version".');
+  }
+
+  const nextVersion = bumpPatchVersion(currentVersion);
+
+  manifest.version = nextVersion;
+  manifest.version_name = nextVersion;
+  writeJson(manifestPath, manifest);
+
+  const pkg = readJson(packagePath);
+  pkg.version = nextVersion;
+  writeJson(packagePath, pkg);
+
+  console.log(`\n=== Bump version ${currentVersion} → ${nextVersion} ===`);
+}
+
 function viteBuild(target) {
   execSync(`node "${viteBin}" build`, {
     cwd: root,
@@ -46,6 +89,8 @@ viteBuild('upload-hook');
 
 console.log('=== Vite: background ===');
 viteBuild('background');
+
+bumpProjectVersion();
 
 cp(path.join(root, 'manifest.json'), path.join(distDir, 'manifest.json'));
 cp(path.join(root, 'src/popup/bootstrap.js'), path.join(distDir, 'panel/bootstrap.js'));

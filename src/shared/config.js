@@ -1,7 +1,7 @@
 /** Extension config — settings, UI flags, Flow selectors. Chỉnh ở đây rồi reload extension. */
 
 export const CHROME_WEB_STORE_URL =
-  'https://chromewebstore.google.com/detail/veo-automation-for-google/fdlajfhamoclhdfcpafljokhdglmoeik';
+  'https://microsoftedge.microsoft.com/addons/detail/hnahbebhbkhkjjejbjmknoiecodlkmeh';
 
 // --- UI (panel) ---
 export const UI_CONFIG = {

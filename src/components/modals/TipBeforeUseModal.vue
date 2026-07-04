@@ -68,7 +68,7 @@ async function copyInstallHint() {
             <img :src="chromeLogo" alt="Chrome" class="w-6 h-6 flex-shrink-0" />
             <div class="min-w-0">
               <p class="font-semibold text-xs text-foreground">Google Chrome</p>
-              <p class="text-xs text-muted-foreground truncate">Chrome Web Store</p>
+              <p class="text-xs text-muted-foreground truncate">Microsoft Edge Add-ons</p>
             </div>
             <i class="pi pi-external-link text-xs text-muted-foreground ml-auto flex-shrink-0" />
           </a>
@@ -87,7 +87,7 @@ async function copyInstallHint() {
             <img :src="edgeLogo" alt="Edge" class="w-6 h-6 flex-shrink-0" />
             <div class="min-w-0">
               <p class="font-semibold text-xs text-foreground">Microsoft Edge</p>
-              <p class="text-xs text-muted-foreground truncate">Chrome Web Store</p>
+              <p class="text-xs text-muted-foreground truncate">Microsoft Edge Add-ons</p>
             </div>
             <i class="pi pi-external-link text-xs text-muted-foreground ml-auto flex-shrink-0" />
           </a>
