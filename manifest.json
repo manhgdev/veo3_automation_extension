@@ -4,8 +4,8 @@
   },
   "name": "VEO Automation for Google Flow — Batch AI Video & Images",
   "description": "Manage prompts, organize batch workflows, and download AI videos and images inside Google Flow.",
-  "version": "1.0.9",
-  "version_name": "1.0.9",
+  "version": "1.0.10",
+  "version_name": "1.0.10",
   "manifest_version": 3,
   "action": {
     "default_title": "VEO Automation",
