@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch } from 'vue';
-import { CHROME_WEB_STORE_URL } from '@shared/config.js';
+import { CHROME_WEB_STORE_URL, EDGE_ADDONS_URL } from '@shared/config.js';
 import chromeLogo from '../../../logo/chrome.svg';
 import edgeLogo from '../../../logo/edge.svg';
 
@@ -68,13 +68,13 @@ async function copyInstallHint() {
             <img :src="chromeLogo" alt="Chrome" class="w-6 h-6 flex-shrink-0" />
             <div class="min-w-0">
               <p class="font-semibold text-xs text-foreground">Google Chrome</p>
-              <p class="text-xs text-muted-foreground truncate">Microsoft Edge Add-ons</p>
+              <p class="text-xs text-muted-foreground truncate">Chrome Web Store</p>
             </div>
             <i class="pi pi-external-link text-xs text-muted-foreground ml-auto flex-shrink-0" />
           </a>
 
           <a
-            :href="CHROME_WEB_STORE_URL"
+            :href="EDGE_ADDONS_URL"
             target="_blank"
             rel="noopener noreferrer"
             class="flex-1 relative flex items-center gap-2 rounded-lg border border-blue-400 bg-blue-50 dark:bg-blue-900/20 px-3 py-2 hover:border-blue-500 transition-colors"

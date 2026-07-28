@@ -1,6 +1,8 @@
 /** Extension config — settings, UI flags, Flow selectors. Chỉnh ở đây rồi reload extension. */
 
 export const CHROME_WEB_STORE_URL =
+  'https://chromewebstore.google.com/detail/fdlajfhamoclhdfcpafljokhdglmoeik?authuser=0';
+export const EDGE_ADDONS_URL =
   'https://microsoftedge.microsoft.com/addons/detail/hnahbebhbkhkjjejbjmknoiecodlkmeh';
 
 // --- UI (panel) ---
@@ -182,12 +184,18 @@ export const FALLBACK_FLOW_CONFIG = {
     tileOnQueue: 'i:contains("movie"), div[style*="brightness(1)"]',
     tileByIdTemplate: 'div[data-tile-id="{tileId}"]:has(div)',
     tileEditLinkTemplate: 'div[data-tile-id="{tileId}"] a[href*="/edit/"]',
-    moreOptionsButtonInHoverTile: 'button:has(i:contains("more_vert"))',
-    downloadButtonInTile: 'button:has(i:contains("download"))',
-    downloadButtonInHoverTile: 'div[aria-haspopup="menu"] i:contains("download")',
+    moreOptionsButtonInHoverTile:
+      'button:has(i:contains("more_vert")), button[aria-haspopup="menu"]:has(i:contains("more"))',
+    downloadButtonInTile:
+      'button:has(i:contains("download")), [role="button"]:has(i:contains("download"))',
+    downloadButtonInHoverTile:
+      '[role="menuitem"]:has(i:contains("download")), button:has(i:contains("download")), div[aria-haspopup="menu"]:has(i:contains("download"))',
     quality1KOption: 'button:has(span:contains("1K"))',
     quality2KOption: 'button:has(span:contains("2K"))',
-    quality1080Option: 'button:has(span:contains("1080p"))',
+    quality720Option:
+      'button:has(span:contains("720p")), [role="menuitem"]:contains("720p"), button:contains("720p")',
+    quality1080Option:
+      'button:has(span:contains("1080p")), [role="menuitem"]:contains("1080p"), button:contains("1080p")',
     quality4KOption: 'button:has(span:contains("4K"))',
     downloadDoneButton: 'button:has(i:contains("check")), header button:last(), button:has(span:contains("Done"))',
     openProfileInfoButton: 'button > img[width="32"][height="32"]',

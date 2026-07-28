@@ -729,11 +729,26 @@ const l = __awaiter;
                 autoChangeFileName
               });
               await p(300)
-            }, veoRunUiDownloadExclusive = async (folderName, prefix, autoChangeFileName, action) => d
-              .runExclusive(async () => {
-                await veoApplyDownloadNaming(folderName, prefix, autoChangeFileName), await action(), await p(
-                  600)
-              }), I = e => {
+            }, veoDownloadPageBlob = async (url, filename, folderName, autoChangeFileName) => {
+              if (!url || !url.startsWith("blob:")) return !1;
+              await veoApplyDownloadNaming(folderName, filename.replace(/\.[^.]+$/, ""),
+                autoChangeFileName);
+              const link = document.createElement("a");
+              link.href = url;
+              link.download = filename;
+              link.style.display = "none";
+              (document.body || document.documentElement).appendChild(link);
+              link.click();
+              link.remove();
+              await p(1e3);
+              return !0
+            }, veoRunUiDownloadExclusive = async (folderName, prefix, autoChangeFileName, action) => {
+              // m()/w() already serialize every DOM action with `d`. Wrapping the whole
+              // sequence in the same non-reentrant mutex deadlocks on the first hover/click.
+              await veoApplyDownloadNaming(folderName, prefix, autoChangeFileName);
+              await action();
+              await p(600)
+            }, I = e => {
               try {
                 chrome.runtime.sendMessage({
                   type: "ACTION_LOG",
@@ -1823,10 +1838,13 @@ const l = __awaiter;
             case "4k":
               e = o.quality4KOption;
               break;
+            case "720":
+              e = o.quality720Option || o.quality1080Option;
+              break;
             default:
               e = o.quality1080Option
           }
-          const r = t.maxRetries ?? 1;
+          const r = Math.max(2, Number(t.maxRetries) || 1);
           let veoUiDlOk = 0;
           for (let i = 0; i < y.length; i++) {
             if (n && n()) return {
@@ -1895,8 +1913,29 @@ const l = __awaiter;
             cancelled: !0
           };
           let r = x[e].src;
-          if (!r && b && o.quality1080Option) {
-            A(`⚠️ Resource ${e+1} has no src — trying Flow UI download (1080)...`);
+          if (b && r?.startsWith("blob:")) {
+            try {
+              const tileStem = veoBuildOutputFileStemWithVariant(t.promptIndex, t.prompt, e, x.length),
+                filename = `${tileStem}.mp4`,
+                autoName = !1 !== t.autoChangeFileName,
+                dlKey = veoDownloadAssetKey(t.promptIndex, filename, l[e], r);
+              if (jobGroup && veoShouldSkipDownload(jobGroup, dlKey)) {
+                S(`⏭️ Skip duplicate blob download: ${filename}`), R++;
+                continue
+              }
+              if (await veoDownloadPageBlob(r, filename, g, autoName)) {
+                jobGroup && veoMarkDownloaded(jobGroup, dlKey), R++;
+                S(`✅ Resource ${e+1}: blob video download initiated as ${filename}`);
+                continue
+              }
+            } catch (blobError) {
+              A(`⚠️ Resource ${e+1}: direct blob download failed, using Flow UI fallback:`,
+                blobError)
+            }
+          }
+          const requiresFlowUiDownload = b && (!r || r.startsWith("blob:"));
+          if (requiresFlowUiDownload && o.quality1080Option) {
+            A(`⚠️ Resource ${e+1} cannot be downloaded directly — trying Flow UI download (1080)...`);
             const tileId = l[e];
             if (tileId) try {
               const tileSel = o.tileByIdTemplate.replace("{tileId}", tileId),
@@ -1904,11 +1943,13 @@ const l = __awaiter;
                 tileStem = veoBuildOutputFileStemWithVariant(t.promptIndex, t.prompt, e, x.length),
                 autoName = !1 !== t.autoChangeFileName,
                 a = t.maxRetries ?? 1;
+              let uiFallbackSucceeded = !1;
               for (let s = 1; s <= a; s++) {
                 try {
                   const dlKey = veoDownloadAssetKey(t.promptIndex, tileStem, tileId);
                   if (jobGroup && veoShouldSkipDownload(jobGroup, dlKey)) {
-                    S(`⏭️ Skip duplicate UI fallback download: ${tileStem}`), R++;
+                    S(`⏭️ Skip duplicate UI fallback download: ${tileStem}`), R++,
+                      uiFallbackSucceeded = !0;
                     break
                   }
                   await veoRunUiDownloadExclusive(g, tileStem, autoName, async () => {
@@ -1922,18 +1963,19 @@ const l = __awaiter;
                     veoIsResolutionUpscaleActive($tile) && await veoWaitForResolutionUpscaleIdle(n, 6e5,
                       $tile)
                   });
-                  jobGroup && veoMarkDownloaded(jobGroup, dlKey), R++, S(
+                  jobGroup && veoMarkDownloaded(jobGroup, dlKey), R++, uiFallbackSucceeded = !0, S(
                     `✅ Tile ${e+1}: UI download initiated (1080 fallback) as ${tileStem}`);
                   break
                 } catch (c) {
                   s < a && await p(1e3)
                 }
               }
-              continue
+              if (uiFallbackSucceeded) continue
             } catch (u) {
               A(`⚠️ UI download fallback failed for tile ${e+1}:`, u)
             }
           }
+          if (requiresFlowUiDownload) r = "";
           if (!r) {
             A(`⚠️ Resource ${e+1} has no src, skipping...`);
             continue

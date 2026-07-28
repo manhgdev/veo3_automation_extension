@@ -226,6 +226,7 @@ let autoRenameDownloads = true;
 
 const pendingDownloadNames = new Map();
 const recentDownloadUrls = new Map();
+const downloadKeysById = new Map();
 const RECENT_DOWNLOAD_TTL_MS = 3 * 60 * 1000;
 let removeDownloadListenerTimer = null;
 
@@ -245,14 +246,26 @@ function shouldSkipRecentDownload(url, targetPath) {
 }
 
 function markRecentDownload(url, targetPath) {
-  recentDownloadUrls.set(recentDownloadKey(url, targetPath), Date.now());
+  const key = recentDownloadKey(url, targetPath);
+  recentDownloadUrls.set(key, Date.now());
   if (recentDownloadUrls.size > 500) {
     const now = Date.now();
     for (const [key, at] of recentDownloadUrls) {
       if (now - at > RECENT_DOWNLOAD_TTL_MS) recentDownloadUrls.delete(key);
     }
   }
+  return key;
 }
+
+chrome.downloads.onChanged.addListener((delta) => {
+  if (!delta?.id || !delta.state) return;
+  const key = downloadKeysById.get(delta.id);
+  if (!key) return;
+  if (delta.state.current === 'interrupted') recentDownloadUrls.delete(key);
+  if (delta.state.current === 'complete' || delta.state.current === 'interrupted') {
+    downloadKeysById.delete(delta.id);
+  }
+});
 
 function sanitizeDownloadSegment(segment) {
   return String(segment || '')
@@ -602,7 +615,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         chrome.downloads.download({ url, filename: safePath, saveAs: false }, (downloadId) => {
           const error = chrome.runtime?.lastError;
-          if (!error && downloadId) markRecentDownload(url, safePath);
+          if (!error && downloadId) {
+            const key = markRecentDownload(url, safePath);
+            downloadKeysById.set(downloadId, key);
+          }
           sendResponse(
             !error && downloadId
               ? { success: true, downloadId }
@@ -617,7 +633,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         chrome.downloads.download({ url, saveAs: false }, (downloadId) => {
           const error = chrome.runtime?.lastError;
-          if (!error && downloadId) markRecentDownload(url, '');
+          if (!error && downloadId) {
+            const key = markRecentDownload(url, '');
+            downloadKeysById.set(downloadId, key);
+          }
           sendResponse(
             !error && downloadId
               ? { success: true, downloadId }
